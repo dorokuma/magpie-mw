@@ -1,0 +1,16 @@
+# Backups (local operational backups, never commit)
+*.bak*
+backup-*/
+
+# Packet capture samples & conversation payloads (local runtime artifacts, never commit)
+# Ignore capture/ directory contents except the sanitized structural report FINDINGS.md
+capture/*
+!capture/FINDINGS.md
+
+# Dependencies, logs & environment
+node_modules/
+*.log
+.env
+
+# Track repository AGENTS.md despite global excludesfile
+!AGENTS.md
