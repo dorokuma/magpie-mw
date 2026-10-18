@@ -1,4 +1,4 @@
-import { onRequest, DIALECTS, PROFILES, STRIP_PARAM_PROFILES, SANITIZE_PROFILES } from "./thinking-control.middleware.js"
+import { onRequest, onProvider, DIALECTS, PROFILES, STRIP_PARAM_PROFILES, SANITIZE_PROFILES } from "./thinking-control.middleware.js"
 
 let pass = 0, fail = 0
 function check(name, cond, info) {
@@ -240,6 +240,112 @@ const unregSanSnap = JSON.stringify(unregSan)
 r = onRequest(unregSan, {})
 check("未登记模型带非标结构 -> 原样放行返回 undefined",
   r === undefined && JSON.stringify(unregSan) === unregSanSnap, unregSan)
+
+// ── 任意组名不锁死：onRequest 原样放行，onProvider 按真实供应商/模型精确处理 ──
+const anyGroupSnapSrc = { model: "group/any-custom-group", prompt_cache_key: "pk-any-1", prompt_cache_retention: "24h", temperature: 0.6 }
+const anyGroupSnap = JSON.stringify(anyGroupSnapSrc)
+r = onRequest(anyGroupSnapSrc, { state: {} })
+check("任意组名 onRequest -> 原样放行返回 undefined",
+  r === undefined && JSON.stringify(anyGroupSnapSrc) === anyGroupSnap, anyGroupSnapSrc)
+
+r = onProvider(anyGroupSnapSrc, {
+  model: "group/any-custom-group",
+  provider: { id: "gugugaga", name: "gugugaga", model: "glm-5.3-flash" },
+  state: {},
+})
+check("任意组名 onProvider gugugaga/glm-5.3-flash -> 剥离 prompt_cache_* 并返回 body",
+  r !== undefined && !("prompt_cache_key" in r) && !("prompt_cache_retention" in r) && r.temperature === 0.6 && r.model === "group/any-custom-group", r)
+
+const dsGroup = {
+  model: "group/any-custom-group",
+  prompt_cache_key: "ds-cache-g",
+  reasoning_effort: "high",
+  messages: [
+    { role: "developer", content: "sys-rule" },
+    { role: "user", content: "hello" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "f1", arguments: "{}" } }],
+      reasoning_details: [
+        { type: "reasoning.text", text: "step1-" },
+        { type: "reasoning.text", text: "step2" },
+      ],
+    },
+  ],
+  tools: [
+    { type: "function", function: { name: "f1", parameters: { type: "object", properties: { a: { type: "string" } } } } },
+  ],
+}
+r = onRequest(dsGroup, { state: {} })
+check("任意组名 deepseek 形态 onRequest -> 原样放行",
+  r === undefined && dsGroup.messages[0].role === "developer" && ("prompt_cache_key" in dsGroup) && ("reasoning_effort" in dsGroup), dsGroup)
+r = onProvider(dsGroup, {
+  model: "group/any-custom-group",
+  provider: { id: "agentrouter", name: "AgentRouter-GitHub", model: "deepseek-v4-flash" },
+  state: {},
+})
+check("任意组名 onProvider agentrouter/deepseek-v4-flash -> 剥离顶层参数并清洗消息/Schema",
+  r !== undefined &&
+  !("prompt_cache_key" in r) &&
+  !("reasoning_effort" in r) &&
+  r.messages[0].role === "system" &&
+  r.messages[2].content === "" &&
+  r.messages[2].reasoning_content === "step1-step2" &&
+  !("reasoning_details" in r.messages[2]) &&
+  Array.isArray(r.tools[0].function.parameters.required) &&
+  r.tools[0].function.parameters.required.length === 0,
+  r)
+
+const qwenGroup = { model: "group/any-custom-group", reasoning_effort: "none" }
+r = onRequest(qwenGroup, { state: {} })
+check("任意组名 qwen 形态 onRequest -> 原样放行并记下 effort",
+  r === undefined && qwenGroup.reasoning_effort === "none", qwenGroup)
+r = onProvider(qwenGroup, {
+  model: "group/any-custom-group",
+  provider: { id: "arkapi", name: "arkapi", model: "qwen3.8-flash-next" },
+  state: {},
+})
+check("任意组名 onProvider arkapi/qwen3.8-flash-next -> qwenChatTemplate 关思考",
+  r !== undefined && et(r) === false && !("reasoning_effort" in r) && r.model === "group/any-custom-group", r)
+
+const direct = { model: Q, reasoning_effort: "none" }
+const directCtx = { state: {} }
+r = onRequest(direct, directCtx)
+check("直连 qwen onRequest -> 翻译思考开关",
+  r !== undefined && et(r) === false && !("reasoning_effort" in r), r)
+const afterDirect = onProvider(direct, Object.assign({ provider: { id: "arkapi", name: "arkapi", model: "qwen3.8-flash-next" } }, directCtx))
+check("直连模型 onRequest 后再经 onProvider -> 幂等返回 undefined",
+  afterDirect === undefined && et(direct) === false && !("reasoning_effort" in direct), direct)
+
+const directGlm = { model: "gugugaga/glm-5.3-flash", prompt_cache_key: "g1", prompt_cache_retention: "24h" }
+r = onRequest(directGlm, { state: {} })
+check("直连 glm onRequest -> 剥离 prompt_cache_*", r !== undefined && !("prompt_cache_key" in r) && !("prompt_cache_retention" in r), r)
+const afterGlm = onProvider(directGlm, { model: "gugugaga/glm-5.3-flash", provider: { id: "gugugaga", model: "glm-5.3-flash" }, state: {} })
+check("直连 glm onRequest 后再经 onProvider -> 幂等返回 undefined", afterGlm === undefined, directGlm)
+
+STRIP_PARAM_PROFILES.push({ match: ["glm-5.3-flash"], providers: ["gugugaga"], fields: ["temperature"] })
+try {
+  const otherVendor = { model: "group/any-custom-group", temperature: 0.4, prompt_cache_key: "pk-scope" }
+  const otherR = onProvider(otherVendor, {
+    model: "group/any-custom-group",
+    provider: { id: "other-vendor", name: "other-vendor", model: "glm-5.3-flash" },
+    state: {},
+  })
+  const gugugaga = { model: "group/any-custom-group", temperature: 0.4, prompt_cache_key: "pk-scope" }
+  const guguR = onProvider(gugugaga, {
+    model: "group/any-custom-group",
+    provider: { id: "gugugaga", name: "gugugaga", model: "glm-5.3-flash" },
+    state: {},
+  })
+  check("providers: [\"gugugaga\"] 只命中该供应商：剥离 temperature，其它供应商只剥未限定的 prompt_cache_*",
+    otherR !== undefined && !("prompt_cache_key" in otherR) && otherR.temperature === 0.4 &&
+    guguR !== undefined && !("prompt_cache_key" in guguR) && !("temperature" in guguR) &&
+    otherR.model === "group/any-custom-group" && guguR.model === "group/any-custom-group",
+    { otherR, guguR })
+} finally {
+  STRIP_PARAM_PROFILES.pop()
+}
 
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)

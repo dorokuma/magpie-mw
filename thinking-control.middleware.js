@@ -7,6 +7,8 @@
 // 安全边界：只处理 PROFILES / STRIP_PARAM_PROFILES / SANITIZE_PROFILES 命中的 model；
 // 其它请求一律原样放行（返回 undefined = 不动）。任何异常也原样放行（同时打一条
 // THINKMW 错误日志便于排查）。绝不主动改未登记的模型。
+// 规则只按真实模型子串（及可选的 providers 供应商子串）匹配，绝不硬编码 group/smartass
+// 这类分组名。分组名在 onRequest 阶段原样放行，等 onProvider 拿到真实 provider 再处理。
 //
 // 智能开/关（不锁死）：按 pi 发来的 reasoning_effort 决定这一次要不要思考——
 //   effort ∈ profile.closeEffort        -> 关思考
@@ -93,8 +95,10 @@ export const PROFILES = [
 ]
 
 // ── 不支持参数剥离表：按 model 子串剥离后端拒绝的顶层字段 ───────────
-// match:  model 串（body.model 或回退 ctx.model）含任一子串即命中
-// fields: 命中后若 body 中存在该字段则 delete，且确保 onRequest 返回 body
+// match:     模型串含任一子串即命中（直连 body.model/ctx.model，或 onProvider 的 provider/model）
+// providers: 可选。配置后还须供应商 id/name（或模型串里的 provider 段）含任一子串才命中；
+//            未配置则只按 match 匹配，不锁死任何组名。
+// fields:    命中后若 body 中存在该字段则 delete，且确保钩子返回 body
 export const STRIP_PARAM_PROFILES = [
   {
     match: ["glm-5.3-flash", "glm-5-3-flash"],
@@ -107,7 +111,8 @@ export const STRIP_PARAM_PROFILES = [
 ]
 
 // ── 规范化/清洗配置表：按 model 子串对 messages / tools 做结构清洗 ──
-// match: model 串（body.model 或回退 ctx.model）含任一子串即命中
+// match:     模型串含任一子串即命中（直连或 onProvider 的 provider/model）
+// providers: 可选。配置后还须供应商 id/name（或模型串里的 provider 段）含任一子串才命中。
 export const SANITIZE_PROFILES = [
   {
     match: ["deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-flash"],
@@ -118,133 +123,196 @@ export const SANITIZE_PROFILES = [
   },
 ]
 
+// 规则是否命中：match 对模型串做子串匹配；配置了 providers 时还须供应商 id/name
+// 或模型串 "provider/model" 的 provider 段含任一 providers 子串。未配 providers 则只看 match。
+function profileMatches(profile, model, providerId) {
+  if (!profile || !Array.isArray(profile.match)) return false
+  if (!profile.match.some(function (m) { return model.indexOf(m) >= 0 })) return false
+  if (!Array.isArray(profile.providers) || profile.providers.length === 0) return true
+  const pid = providerId != null ? String(providerId) : ""
+  const slash = model.indexOf("/")
+  const modelProvider = slash >= 0 ? model.slice(0, slash) : ""
+  return profile.providers.some(function (p) {
+    const needle = p != null ? String(p) : ""
+    if (!needle) return false
+    return (pid && pid.indexOf(needle) >= 0) || (modelProvider && modelProvider.indexOf(needle) >= 0)
+  })
+}
+
+// onRequest 与 onProvider 共用的剥离 / 清洗 / 思考控制。
+// model 是用来匹配规则的目标模型串；providerId 供规则项可选的 providers 精确限定。
+// savedEffort 优先于 body.reasoning_effort（字段已被前序阶段剥离时回退用）。
+// 只在实际改了 body 时返回 true。
+function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort) {
+  let stripped = false
+  const strippedFields = []
+  for (let i = 0; i < STRIP_PARAM_PROFILES.length; i++) {
+    const sp = STRIP_PARAM_PROFILES[i]
+    if (!sp || !Array.isArray(sp.fields)) continue
+    if (!profileMatches(sp, model, providerId)) continue
+    for (let j = 0; j < sp.fields.length; j++) {
+      const f = sp.fields[j]
+      if (f in body) {
+        if (f === "reasoning_effort" && !hasSavedEffort) {
+          hasSavedEffort = true
+          savedEffort = body.reasoning_effort
+        }
+        delete body[f]
+        stripped = true
+        strippedFields.push(f)
+      }
+    }
+  }
+  if (stripped) {
+    console.log("THINKMW strip model=" + model + " fields=" + strippedFields.join(","))
+  }
+
+  let sanitized = false
+  const sanitizeActions = []
+  function addSanitizeAction(act) {
+    if (sanitizeActions.indexOf(act) < 0) sanitizeActions.push(act)
+  }
+  for (let i = 0; i < SANITIZE_PROFILES.length; i++) {
+    const sp = SANITIZE_PROFILES[i]
+    if (!profileMatches(sp, model, providerId)) continue
+
+    if (Array.isArray(body.messages)) {
+      for (let j = 0; j < body.messages.length; j++) {
+        const msg = body.messages[j]
+        if (!msg || typeof msg !== "object") continue
+        if (sp.developerToSystem !== false && msg.role === "developer") {
+          msg.role = "system"
+          sanitized = true
+          addSanitizeAction("developer->system")
+        }
+        if (msg.role === "assistant") {
+          if (sp.assistantReasoningDetailsToContent !== false && Array.isArray(msg.reasoning_details)) {
+            let rcText = ""
+            for (let k = 0; k < msg.reasoning_details.length; k++) {
+              const item = msg.reasoning_details[k]
+              rcText += (item && typeof item.text === "string") ? item.text : ""
+            }
+            if (typeof msg.reasoning_content !== "string" || msg.reasoning_content === "") {
+              if (rcText.length > 0) {
+                msg.reasoning_content = rcText
+              } else if (!("reasoning_content" in msg) || msg.reasoning_content == null) {
+                msg.reasoning_content = ""
+              }
+            }
+            delete msg.reasoning_details
+            sanitized = true
+            addSanitizeAction("reasoning_details->reasoning_content")
+          }
+          if (sp.assistantNullContentToEmpty !== false && (msg.content === null || typeof msg.content === "undefined")) {
+            msg.content = ""
+            sanitized = true
+            addSanitizeAction("assistant_content_empty")
+          }
+        }
+      }
+    }
+
+    if (sp.toolsEnsureRequiredArray !== false && Array.isArray(body.tools)) {
+      for (let j = 0; j < body.tools.length; j++) {
+        const t = body.tools[j]
+        if (
+          t &&
+          t.function &&
+          t.function.parameters &&
+          typeof t.function.parameters === "object" &&
+          !Array.isArray(t.function.parameters)
+        ) {
+          if (t.function.parameters.type === "object" && !Array.isArray(t.function.parameters.required)) {
+            t.function.parameters.required = []
+            sanitized = true
+            addSanitizeAction("tools_required")
+          }
+        }
+      }
+    }
+  }
+  if (sanitized) {
+    console.log("THINKMW sanitize model=" + model + " actions=" + sanitizeActions.join(","))
+  }
+
+  const modified = stripped || sanitized
+  const prof = PROFILES.find(function (p) { return profileMatches(p, model, providerId) })
+  if (!prof) return modified
+  const D = DIALECTS[prof.dialect]
+  if (!D) return modified
+  if (D.escape(body)) return modified // 逃生舱：调用方已指定，尊重不动
+
+  const eff = hasSavedEffort ? savedEffort : body.reasoning_effort
+  const absent = (eff === undefined || eff === null)
+  const off = absent ? prof.closeWhenAbsent === true
+                     : (prof.closeEffort.indexOf(String(eff)) >= 0)
+
+  if (!D.apply(body, !off)) return modified // 方言认为无需改，则原样放行
+  console.log("THINKMW model=" + model + " dialect=" + prof.dialect + " effort=" + String(eff) + " thinking=" + (!off))
+  return true
+}
+
+function logHookError(body, ctx, e) {
+  let m = ""
+  let msg = ""
+  try { m = (body && body.model != null) ? String(body.model) : (ctx && ctx.model != null ? String(ctx.model) : "") } catch (_) { m = "<unprintable>" }
+  try { msg = (e && e.message) ? String(e.message) : String(e) } catch (_) { msg = "<unprintable>" }
+  try { console.error("THINKMW error model=" + m + " err=" + msg) } catch (_) { /* 日志本身出错也不外抛 */ }
+}
+
 export function onRequest(body, ctx) {
   try {
     if (!body || typeof body !== "object" || Array.isArray(body)) return
     const rawModel = body.model != null ? body.model : (ctx && ctx.model != null ? ctx.model : "")
     const model = String(rawModel)
 
-    // 若将来某模型同时挂入 STRIP_PARAM_PROFILES（剥离 reasoning_effort）与 PROFILES，
-    // 在剥离前先记住原始 reasoning_effort 供 PROFILES 判断。
+    // 分组路由前 body.model 仍是组名。把原始 reasoning_effort 存进 ctx.state，
+    // 供 onProvider 在字段已被剥离后仍能按原始意图翻译思考开关。
     let hasSavedEffort = false
     let savedEffort
-
-    let stripped = false
-    const strippedFields = []
-    for (let i = 0; i < STRIP_PARAM_PROFILES.length; i++) {
-      const sp = STRIP_PARAM_PROFILES[i]
-      if (!sp || !Array.isArray(sp.match) || !Array.isArray(sp.fields)) continue
-      if (!sp.match.some(function (m) { return model.indexOf(m) >= 0 })) continue
-      for (let j = 0; j < sp.fields.length; j++) {
-        const f = sp.fields[j]
-        if (f in body) {
-          if (f === "reasoning_effort" && !hasSavedEffort) {
-            hasSavedEffort = true
-            savedEffort = body.reasoning_effort
-          }
-          delete body[f]
-          stripped = true
-          strippedFields.push(f)
-        }
-      }
+    if (ctx && ctx.state && typeof ctx.state === "object" && ("reasoning_effort" in body) && !ctx.state.hasSavedEffort) {
+      ctx.state.savedEffort = body.reasoning_effort
+      ctx.state.hasSavedEffort = true
     }
-    if (stripped) {
-      console.log("THINKMW strip model=" + model + " fields=" + strippedFields.join(","))
+    if (ctx && ctx.state && typeof ctx.state === "object" && ctx.state.hasSavedEffort) {
+      hasSavedEffort = true
+      savedEffort = ctx.state.savedEffort
     }
 
-    let sanitized = false
-    const sanitizeActions = []
-    function addSanitizeAction(act) {
-      if (sanitizeActions.indexOf(act) < 0) sanitizeActions.push(act)
-    }
-    for (let i = 0; i < SANITIZE_PROFILES.length; i++) {
-      const sp = SANITIZE_PROFILES[i]
-      if (!sp || !Array.isArray(sp.match)) continue
-      if (!sp.match.some(function (m) { return model.indexOf(m) >= 0 })) continue
-
-      if (Array.isArray(body.messages)) {
-        for (let j = 0; j < body.messages.length; j++) {
-          const msg = body.messages[j]
-          if (!msg || typeof msg !== "object") continue
-          if (sp.developerToSystem !== false && msg.role === "developer") {
-            msg.role = "system"
-            sanitized = true
-            addSanitizeAction("developer->system")
-          }
-          if (msg.role === "assistant") {
-            if (sp.assistantReasoningDetailsToContent !== false && Array.isArray(msg.reasoning_details)) {
-              let rcText = ""
-              for (let k = 0; k < msg.reasoning_details.length; k++) {
-                const item = msg.reasoning_details[k]
-                rcText += (item && typeof item.text === "string") ? item.text : ""
-              }
-              if (typeof msg.reasoning_content !== "string" || msg.reasoning_content === "") {
-                if (rcText.length > 0) {
-                  msg.reasoning_content = rcText
-                } else if (!("reasoning_content" in msg) || msg.reasoning_content == null) {
-                  msg.reasoning_content = ""
-                }
-              }
-              delete msg.reasoning_details
-              sanitized = true
-              addSanitizeAction("reasoning_details->reasoning_content")
-            }
-            if (sp.assistantNullContentToEmpty !== false && (msg.content === null || typeof msg.content === "undefined")) {
-              msg.content = ""
-              sanitized = true
-              addSanitizeAction("assistant_content_empty")
-            }
-          }
-        }
-      }
-
-      if (sp.toolsEnsureRequiredArray !== false && Array.isArray(body.tools)) {
-        for (let j = 0; j < body.tools.length; j++) {
-          const t = body.tools[j]
-          if (
-            t &&
-            t.function &&
-            t.function.parameters &&
-            typeof t.function.parameters === "object" &&
-            !Array.isArray(t.function.parameters)
-          ) {
-            if (t.function.parameters.type === "object" && !Array.isArray(t.function.parameters.required)) {
-              t.function.parameters.required = []
-              sanitized = true
-              addSanitizeAction("tools_required")
-            }
-          }
-        }
-      }
-    }
-    if (sanitized) {
-      console.log("THINKMW sanitize model=" + model + " actions=" + sanitizeActions.join(","))
-    }
-
-    const modified = stripped || sanitized
-    const prof = PROFILES.find(function (p) {
-      return p.match.some(function (m) { return model.indexOf(m) >= 0 })
-    })
-    if (!prof) return modified ? body : undefined
-    const D = DIALECTS[prof.dialect]
-    if (!D) return modified ? body : undefined
-    if (D.escape(body)) return modified ? body : undefined // 逃生舱：调用方已指定，尊重不动
-
-    const eff = hasSavedEffort ? savedEffort : body.reasoning_effort
-    const absent = (eff === undefined || eff === null)
-    const off = absent ? prof.closeWhenAbsent === true
-                       : (prof.closeEffort.indexOf(String(eff)) >= 0)
-
-    if (!D.apply(body, !off)) return modified ? body : undefined // 方言认为无需改，则原样放行
-    console.log("THINKMW model=" + model + " dialect=" + prof.dialect + " effort=" + String(eff) + " thinking=" + (!off))
-    return body
+    const modified = applyProfiles(body, ctx, model, "", savedEffort, hasSavedEffort)
+    return modified ? body : undefined
   } catch (e) {
-    // 异常一律原样放行（返回 undefined），但留一条日志，线上可查
-    let m = ""
-    let msg = ""
-    try { m = (body && body.model != null) ? String(body.model) : (ctx && ctx.model != null ? String(ctx.model) : "") } catch (_) { m = "<unprintable>" }
-    try { msg = (e && e.message) ? String(e.message) : String(e) } catch (_) { msg = "<unprintable>" }
-    try { console.error("THINKMW error model=" + m + " err=" + msg) } catch (_) { /* 日志本身出错也不外抛 */ }
+    logHookError(body, ctx, e)
+    return
+  }
+}
+
+// Magpie 在路由选定具体渠道后调用。此时 body.model / ctx.model 仍是客户端分组名，
+// ctx.provider = { id, name, account, model } 才是真实供应商与底层模型。
+// 返回修改后的 body 即替换发往该 provider 的请求体；返回 undefined 即原样放行。严禁返回 null。
+export function onProvider(body, ctx) {
+  try {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return
+    const prov = ctx && ctx.provider && typeof ctx.provider === "object" ? ctx.provider : null
+    const pId = prov ? String(prov.id || prov.name || "") : ""
+    const pModel = prov && prov.model != null ? String(prov.model) : ""
+    const targetModel = (pId && pModel) ? (pId + "/" + pModel)
+      : (pModel || (body && body.model != null ? String(body.model) : "") || (ctx && ctx.model != null ? String(ctx.model) : ""))
+
+    let hasSavedEffort = false
+    let savedEffort
+    if ("reasoning_effort" in body) {
+      hasSavedEffort = true
+      savedEffort = body.reasoning_effort
+    } else if (ctx && ctx.state && typeof ctx.state === "object" && ctx.state.hasSavedEffort) {
+      hasSavedEffort = true
+      savedEffort = ctx.state.savedEffort
+    }
+
+    const modified = applyProfiles(body, ctx, targetModel, pId, savedEffort, hasSavedEffort)
+    return modified ? body : undefined
+  } catch (e) {
+    logHookError(body, ctx, e)
     return
   }
 }

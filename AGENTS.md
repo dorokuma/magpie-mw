@@ -4,7 +4,7 @@
 
 `magpie-mw` 是面向本机 Magpie LLM 网关（`127.0.0.1:3425`）的自定义网关中间件与请求抓包/上游兼容性探针工具集：
 
-- `thinking-control.middleware.js`：生产环境网关中间件插件（导出 `onRequest(body, ctx)` 及 `DIALECTS`、`PROFILES`、`STRIP_PARAM_PROFILES`、`SANITIZE_PROFILES`），负责将客户端（如 `pi`）发送的 `reasoning_effort` 智能翻译为各后端方言真正生效的思考开关字段（如 `qwenChatTemplate` 的 `chat_template_kwargs.enable_thinking`、`thinkingDisabled` 的 `thinking.type: "disabled"`），并按模型子串执行不支持顶层参数剥离（`STRIP_PARAM_PROFILES`）与消息/工具 Schema 兼容性清洗（`SANITIZE_PROFILES`）。
+- `thinking-control.middleware.js`：生产环境网关中间件插件（导出 `onRequest(body, ctx)`、`onProvider(body, ctx)` 及 `DIALECTS`、`PROFILES`、`STRIP_PARAM_PROFILES`、`SANITIZE_PROFILES`）。双阶段钩子：`onRequest` 在路由前按客户端模型串（直连 `provider/model`）做思考翻译、参数剥离与结构清洗；分组名（如 `group/...`）不锁死、原样放行。`onProvider` 在 Magpie 选定具体渠道后触发，用 `ctx.provider`（`{ id, name, account, model }`）拼出真实 `id/model` 再走同一套规则，使第 1 次请求即按底层模型精确剥离/清洗。规则项可选用 `providers` 限定供应商子串、用 `match` 限定模型子串；未配 `providers` 时只按 `match`。负责将客户端（如 `pi`）发送的 `reasoning_effort` 智能翻译为各后端方言真正生效的思考开关字段（如 `qwenChatTemplate` 的 `chat_template_kwargs.enable_thinking`、`thinkingDisabled` 的 `thinking.type: "disabled"`），并按模型子串执行不支持顶层参数剥离（`STRIP_PARAM_PROFILES`）与消息/工具 Schema 兼容性清洗（`SANITIZE_PROFILES`）。
 - `capture.middleware.js`：只读抓包中间件（所有分支均 `return undefined`，绝不修改上游请求），在无 `fs` 的沙盒环境下通过 journald 分片（`REQCHUNK`）输出请求结构与摘要。
 - `extract.py` / `analyze.py`：日志分片重组工具（从 journald 或日志文件提取 `REQCHUNK` 还原为完整 JSON 记录）与结构化分析脚本（输出顶层字段、工具表与消息结构摘要，不抄录对话正文）。
 - `capture-body.mjs`：抓包体加载器，从抓包记录 JSON 中按原始字段顺序精确重建真实请求体对象（供离线测试与探针复用）。
@@ -49,8 +49,9 @@
 - **moejs 沙盒约束**：
   - 网关中间件运行在 Magpie 内置的 `moejs` 沙盒中：**无 `fs`、无 `require`、无网络访问能力**。
   - 生产中间件必须采用**纯 ES 兼容写法**（无 Node.js 内置模块依赖、无外部 npm 包依赖），保证沙盒与本地 Node 测试环境双端可直接加载。
-  - **异常 `try/catch` 原样放行**：`onRequest(body, ctx)` 整体必须包裹在 `try/catch` 中；遇到任何异常时记录错误日志并原样放行（返回 `undefined`），绝不阻断正常网关流量。
-  - **返回值契约**：仅在实际修改了 `body` 时才返回 `body`，未命中规则或无需修改时必须返回 `undefined`；多阶段处理须遵守组合返回值契约 `modified = stripped || sanitized`，当思考控制未命中、命中逃生舱或方言 `apply` 返回 `false` 时，统一按 `return modified ? body : undefined` 返回，防止前序参数剥离或结构清洗改动丢失。
+  - **异常 `try/catch` 原样放行**：`onRequest(body, ctx)` 与 `onProvider(body, ctx)` 整体必须包裹在 `try/catch` 中；遇到任何异常时记录错误日志并原样放行（返回 `undefined`），绝不阻断正常网关流量。严禁返回 `null`。
+  - **双阶段钩子**：`onRequest` 看到的 `body.model` / `ctx.model` 仍是客户端传入值。直连模型在此阶段完成剥离、清洗与思考翻译；若 `ctx.state` 为对象且请求带 `reasoning_effort`，先写入 `ctx.state.savedEffort`（`hasSavedEffort`），避免后续剥离丢掉原始意图。`onProvider` 在路由选定渠道后调用：`body.model` 仍可能是分组名，真实供应商与底层模型取自 `ctx.provider.id`（回退 `name`）与 `ctx.provider.model`，目标模型串为 `id + "/" + model`。effort 优先读 `body.reasoning_effort`，已被剥离则回退 `ctx.state.savedEffort`。返回修改后的 `body` 即替换发往该 provider 的请求体。直连模型若已在 `onRequest` 处理完，`onProvider` 必须幂等并返回 `undefined`。
+  - **返回值契约**：仅在实际修改了 `body` 时才返回 `body`，未命中规则或无需修改时必须返回 `undefined`；多阶段处理须遵守组合返回值契约 `modified = stripped || sanitized`，当思考控制未命中、命中逃生舱或方言 `apply` 返回 `false` 时，统一按 `return modified ? body : undefined` 返回，防止前序参数剥离或结构清洗改动丢失。规则表不得硬编码具体组名。
 
 ## 5. 决策记录与本地产物声明
 
