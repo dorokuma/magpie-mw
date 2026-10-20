@@ -1,5 +1,5 @@
 // capture-body.mjs — rebuild a request body out of one capture record in
-// /root/magpie-mw/capture, so tests and live probes work on the REAL shape pi
+// /root/workspace/magpie-mw/capture, so tests and live probes work on the REAL shape pi
 // sent, not on something written by hand.
 //
 // The tools array comes byte for byte from the record's `tools_json` (that file
@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs"
 import assert from "node:assert/strict"
 
-export const CAP = "/root/magpie-mw/capture"
+export const CAP = "/root/workspace/magpie-mw/capture"
 
 function scalarOf(rec, key) {
   const c = rec.scalar_fields[key]

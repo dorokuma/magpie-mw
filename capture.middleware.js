@@ -5,11 +5,11 @@
 // undefined in every path, so magpie sends the request upstream untouched.
 // Every failure is swallowed and only logged.
 //
-// Output: /root/magpie-mw/capture/req-<NN>-<ts>.json when the sandbox has a
+// Output: /root/workspace/magpie-mw/capture/req-<NN>-<ts>.json when the sandbox has a
 // usable `fs`; otherwise the same JSON is emitted to the log in numbered
 // chunks (REQCHUNK <NN>/<total> ...) which the operator reassembles.
 
-const OUT_DIR = "/root/magpie-mw/capture"
+const OUT_DIR = "/root/workspace/magpie-mw/capture"
 const MARK = "deepseek-flash"
 const CHUNK_LINE = 1500
 const CHUNK_PAYLOAD = 1480
