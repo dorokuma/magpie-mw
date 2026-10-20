@@ -105,6 +105,10 @@ export const STRIP_PARAM_PROFILES = [
     fields: ["prompt_cache_key", "prompt_cache_retention"],
   },
   {
+    match: ["glm-5.3", "glm-5-3"],
+    fields: ["prompt_cache_retention"],
+  },
+  {
     match: ["deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-flash"],
     fields: ["prompt_cache_key", "reasoning_effort"],
   },
