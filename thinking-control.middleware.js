@@ -124,6 +124,7 @@ export const SANITIZE_PROFILES = [
     assistantReasoningDetailsToContent: true,
     assistantNullContentToEmpty: true,
     toolsEnsureRequiredArray: true,
+    tailToolResultAppendUser: true,
   },
 ]
 
@@ -212,6 +213,14 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
             sanitized = true
             addSanitizeAction("assistant_content_empty")
           }
+        }
+      }
+      if (sp.tailToolResultAppendUser !== false && body.messages.length > 0) {
+        const lastMsg = body.messages[body.messages.length - 1]
+        if (lastMsg && typeof lastMsg === "object" && lastMsg.role === "tool") {
+          body.messages.push({ role: "user", content: "(tool results above)" })
+          sanitized = true
+          addSanitizeAction("tail_tool_append_user")
         }
       }
     }

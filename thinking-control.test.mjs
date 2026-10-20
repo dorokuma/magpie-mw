@@ -196,14 +196,18 @@ const dsReq = {
   ],
 }
 r = onRequest(dsReq, {})
-check("deepseek 全量清洗 -> 剥离顶层非标参数 + developer转system + reasoning_details转reasoning_content + null转空串 + 补tools.required",
+check("deepseek 全量清洗 -> 剥离顶层非标参数 + developer转system + reasoning_details转reasoning_content + null转空串 + 末尾tool追加user + 补tools.required",
   r !== undefined &&
   !("prompt_cache_key" in r) &&
   !("reasoning_effort" in r) &&
+  r.messages.length === 5 &&
   r.messages[0].role === "system" &&
   r.messages[2].content === "" &&
   r.messages[2].reasoning_content === "step1-step2" &&
   !("reasoning_details" in r.messages[2]) &&
+  r.messages[3].role === "tool" &&
+  r.messages[4].role === "user" &&
+  r.messages[4].content === "(tool results above)" &&
   Array.isArray(r.tools[0].function.parameters.required) &&
   r.tools[0].function.parameters.required.length === 0 &&
   r.tools[1].function.parameters.required.length === 1 &&
@@ -212,7 +216,7 @@ check("deepseek 全量清洗 -> 剥离顶层非标参数 + developer转system + 
 
 // 已清洗合规的 deepseek 请求再次经过 onRequest -> 保持幂等返回 undefined
 const r2 = onRequest(r, {})
-check("deepseek 已合规请求幂等 -> 返回 undefined", r2 === undefined, r2)
+check("deepseek 已合规请求幂等 -> 返回 undefined", r2 === undefined && r.messages.length === 5, r2)
 
 // 空 reasoning_details 且无 reasoning_content / content: undefined -> 补空串并删 reasoning_details
 const dsEmpty = {
@@ -362,6 +366,32 @@ try {
 } finally {
   STRIP_PARAM_PROFILES.pop()
 }
+
+// ── tailToolResultAppendUser：末条 role=tool 追加 user 及幂等/边界验证 ──
+const dsTailDirect = { model: "agentrouter/deepseek-v4-flash", messages: [{ role: "user", content: "q" }, { role: "tool", tool_call_id: "c1", content: "res" }] }
+const tailLogs = [], origLog = console.log
+console.log = function () { tailLogs.push(Array.prototype.join.call(arguments, " ")); origLog.apply(console, arguments) }
+try { r = onRequest(dsTailDirect, { state: {} }) } finally { console.log = origLog }
+const afterTailDirect = onProvider(dsTailDirect, { model: "agentrouter/deepseek-v4-flash", provider: { id: "agentrouter", name: "AgentRouter-GitHub", model: "deepseek-v4-flash" }, state: {} })
+check("直连 deepseek-v4-flash 末条 role=tool -> 追加 user + 日志含 tail_tool_append_user + 二次调用幂等返回 undefined",
+  r !== undefined && r.messages.length === 3 && r.messages[2].role === "user" && r.messages[2].content === "(tool results above)" &&
+  tailLogs.some(l => l.indexOf("tail_tool_append_user") >= 0) && afterTailDirect === undefined && dsTailDirect.messages.length === 3, { r, afterTailDirect, tailLogs })
+
+const dsTailGroup = { model: "group/smartass", messages: [{ role: "user", content: "q" }, { role: "tool", tool_call_id: "c2", content: "res2" }] }
+const arCtx = { model: "group/smartass", provider: { id: "agentrouter", name: "AgentRouter-GitHub", model: "deepseek-v4-flash" }, state: {} }
+const reqTailG = onRequest(dsTailGroup, arCtx), provTailG = onProvider(dsTailGroup, arCtx), provTailG2 = onProvider(dsTailGroup, arCtx)
+check("分组路由 onProvider agentrouter/deepseek-v4-flash 末条 role=tool -> 追加 user 且二次调用幂等返回 undefined",
+  reqTailG === undefined && provTailG !== undefined && provTailG.messages.length === 3 &&
+  provTailG.messages[2].role === "user" && provTailG.messages[2].content === "(tool results above)" && provTailG2 === undefined, { reqTailG, provTailG, provTailG2 })
+
+const dsTailUser = { model: "deepseek-v4-flash", messages: [{ role: "tool", tool_call_id: "c1", content: "ok" }, { role: "user", content: "done" }] }
+const dsTailAsst = { model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ans" }] }
+check("deepseek-v4-flash 末条已是 user 或 assistant -> 不追加返回 undefined",
+  onRequest(dsTailUser, {}) === undefined && dsTailUser.messages.length === 2 && onRequest(dsTailAsst, {}) === undefined && dsTailAsst.messages.length === 2)
+
+const gptTailTool = { model: "gpt-4o", messages: [{ role: "user", content: "hi" }, { role: "tool", tool_call_id: "c1", content: "ok" }] }
+check("未命中模型 (gpt-4o) 末条为 role=tool -> 原样放行返回 undefined",
+  onRequest(gptTailTool, {}) === undefined && gptTailTool.messages.length === 2 && gptTailTool.messages[1].role === "tool")
 
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)
