@@ -8,7 +8,7 @@ record is emitted as numbered one-line chunks:
 
 Chunks of one call are contiguous; `CAPTURE_REQ <seq> begin|end` lines bound
 them. This script slices journald, groups chunks per call and writes a JSON
-file per complete record to /root/magpie-mw/capture/.
+file per complete record to /root/workspace/magpie-mw/capture/.
 """
 import json
 import re
@@ -34,7 +34,7 @@ def main():
         prefix = args[i + 1] + "-"
         del args[i:i + 2]
     since = args[0]
-    outdir = args[1] if len(args) > 1 else "/root/magpie-mw/capture"
+    outdir = args[1] if len(args) > 1 else "/root/workspace/magpie-mw/capture"
     if log:
         with open(log) as fh:
             raw = fh.read()
