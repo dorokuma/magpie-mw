@@ -41,7 +41,7 @@
 ## 4. 修改纪律与运行时约束
 
 - **修改前备份与轮转**：修改任何 `.middleware.js`（或配套测试文件）前，必须先在同一目录创建带时间戳的 `.bak` 备份文件（命名格式 `<filename>.bak-YYYYMMDD-HHMMSS-<tag>`）；同目录同文件的 `.bak` 备份最多保留 **3 个**（超出时清理最旧备份）。
-- **生产挂载与重启生效**：生产插件注册在 `/root/.config/magpie/plugins.json` 中（规范路径 `/root/workspace/magpie-mw/thinking-control.middleware.js`）。Magpie 插件宿主不热重载，修改 `.middleware.js` 后必须执行：
+- **生产挂载与热重载生效**：生产插件注册在 `/root/.config/magpie/plugins.json` 中（规范路径 `/root/workspace/magpie-mw/thinking-control.middleware.js`）。Magpie 插件宿主会热重载中间件文件，修改 `.middleware.js` 后**通常无需重启**即可生效；可通过查看 `magpie` journal 中该中间件输出的日志行（如 `THINKMW` 前缀日志）或发起一次真实请求观察路由/清洗日志进行可选核验。热重载存在极小概率延迟或失败，**若核验未生效再执行**：
   ```bash
   systemctl restart magpie && sleep 2 && systemctl is-active magpie
   ```

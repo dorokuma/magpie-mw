@@ -324,6 +324,22 @@ check("直连 glm onRequest -> 剥离 prompt_cache_*", r !== undefined && !("pro
 const afterGlm = onProvider(directGlm, { model: "gugugaga/glm-5.3-flash", provider: { id: "gugugaga", model: "glm-5.3-flash" }, state: {} })
 check("直连 glm onRequest 后再经 onProvider -> 幂等返回 undefined", afterGlm === undefined, directGlm)
 
+// ── STRIP_PARAM_PROFILES：glm-5.3 / glm-5-3 非 flash 档仅剥离 prompt_cache_retention ──
+const glm53Direct = { model: "arkapi/glm-5.3", prompt_cache_key: "k-53", prompt_cache_retention: "24h", reasoning_effort: "high" }
+r = onRequest(glm53Direct, { state: {} })
+check("arkapi/glm-5.3 onRequest -> 剥离 prompt_cache_retention 并保留 prompt_cache_key", r !== undefined && !("prompt_cache_retention" in r) && r.prompt_cache_key === "k-53" && r.reasoning_effort === "high", r)
+check("arkapi/glm-5.3 已清洗请求二次经 onRequest -> 幂等返回 undefined", onRequest(glm53Direct, { state: {} }) === undefined && !("prompt_cache_retention" in glm53Direct), glm53Direct)
+check("arkapi/glm-5.3 已清洗请求再经 onProvider -> 幂等返回 undefined", onProvider(glm53Direct, { model: "arkapi/glm-5.3", provider: { id: "arkapi", model: "glm-5.3" }, state: {} }) === undefined && !("prompt_cache_retention" in glm53Direct), glm53Direct)
+const glm53Dash = { model: "arkapi/glm-5-3", prompt_cache_key: "k-5-3", prompt_cache_retention: "24h" }
+check("arkapi/glm-5-3 连字符模型名 -> 同样剥离 prompt_cache_retention 并保留 prompt_cache_key", onRequest(glm53Dash, {}) !== undefined && !("prompt_cache_retention" in glm53Dash) && glm53Dash.prompt_cache_key === "k-5-3", glm53Dash)
+const glm53Group = { model: "group/glm-5.3", prompt_cache_key: "k-grp", prompt_cache_retention: "24h" }
+check("group/glm-5.3 经 onRequest -> 剥离 prompt_cache_retention 并保留 prompt_cache_key", onRequest(glm53Group, { state: {} }) !== undefined && !("prompt_cache_retention" in glm53Group) && glm53Group.prompt_cache_key === "k-grp", glm53Group)
+check("group/glm-5.3 经 onRequest 后再经 onProvider -> 幂等返回 undefined", onProvider(glm53Group, { model: "group/glm-5.3", provider: { id: "arkapi", model: "glm-5.3" }, state: {} }) === undefined && !("prompt_cache_retention" in glm53Group), glm53Group)
+const glm53AnyGrp = { model: "group/any-custom-group", prompt_cache_key: "k-any53", prompt_cache_retention: "24h" }
+check("任意组名经 onRequest 放行后由 onProvider(arkapi/glm-5.3) 剥离 prompt_cache_retention 且二次幂等", onRequest(glm53AnyGrp, { state: {} }) === undefined && onProvider(glm53AnyGrp, { model: "group/any-custom-group", provider: { id: "arkapi", model: "glm-5.3" }, state: {} }) !== undefined && !("prompt_cache_retention" in glm53AnyGrp) && glm53AnyGrp.prompt_cache_key === "k-any53" && onProvider(glm53AnyGrp, { model: "group/any-custom-group", provider: { id: "arkapi", model: "glm-5.3" }, state: {} }) === undefined, glm53AnyGrp)
+const glm53FlashReg = { model: "arkapi/glm-5.3-flash", prompt_cache_key: "k-fl", prompt_cache_retention: "24h" }
+check("glm-5.3-flash 不回归 -> 仍同时剥离 prompt_cache_key 与 prompt_cache_retention 且二次幂等", onRequest(glm53FlashReg, {}) !== undefined && !("prompt_cache_key" in glm53FlashReg) && !("prompt_cache_retention" in glm53FlashReg) && onRequest(glm53FlashReg, {}) === undefined, glm53FlashReg)
+
 STRIP_PARAM_PROFILES.push({ match: ["glm-5.3-flash"], providers: ["gugugaga"], fields: ["temperature"] })
 try {
   const otherVendor = { model: "group/any-custom-group", temperature: 0.4, prompt_cache_key: "pk-scope" }
