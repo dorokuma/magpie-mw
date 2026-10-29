@@ -1,0 +1,15 @@
+{
+  "name": "magpie-agent-minis",
+  "version": "0.1.0",
+  "description": "OpenMinis Android client icon and endpoint profile for Magpie Dashboard",
+  "type": "module",
+  "main": "./minis.agent.js",
+  "exports": "./minis.agent.js",
+  "keywords": ["magpie", "magpie-plugin", "magpie-agent", "minis", "openminis", "android"],
+  "author": "doro",
+  "license": "MIT",
+  "magpie": {
+    "agent": "./minis.agent.js",
+    "icon": "./icon.png"
+  }
+}
