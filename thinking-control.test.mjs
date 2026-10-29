@@ -202,10 +202,10 @@ const dsReq = {
   ],
 }
 r = onRequest(dsReq, {})
-check("deepseek 全量清洗 -> 剥离顶层非标参数 + developer转system + reasoning_details转reasoning_content + null转空串 + 末尾tool追加user + 补tools.required",
+check("deepseek 全量清洗 -> 剥离 prompt_cache_key 保留 reasoning_effort + developer转system + reasoning_details转reasoning_content + null转空串 + 末尾tool追加user + 补tools.required",
   r !== undefined &&
   !("prompt_cache_key" in r) &&
-  !("reasoning_effort" in r) &&
+  r.reasoning_effort === "high" &&
   r.messages.length === 5 &&
   r.messages[0].role === "system" &&
   r.messages[2].content === "" &&
@@ -295,10 +295,10 @@ r = onProvider(dsGroup, {
   provider: { id: "agentrouter", name: "AgentRouter-GitHub", model: "deepseek-v4-flash" },
   state: {},
 })
-check("任意组名 onProvider agentrouter/deepseek-v4-flash -> 剥离顶层参数并清洗消息/Schema",
+check("任意组名 onProvider agentrouter/deepseek-v4-flash -> 剥离 prompt_cache_key 保留 reasoning_effort 并清洗消息/Schema",
   r !== undefined &&
   !("prompt_cache_key" in r) &&
-  !("reasoning_effort" in r) &&
+  r.reasoning_effort === "high" &&
   r.messages[0].role === "system" &&
   r.messages[2].content === "" &&
   r.messages[2].reasoning_content === "step1-step2" &&

@@ -1,6 +1,6 @@
 {
   "name": "@local/middleware-agentrouter-itemstrip",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Strip input item IDs and reasoning items for stateless AgentRouter upstream requests",
   "type": "module",
   "main": "./agentrouter-itemstrip.middleware.js",
@@ -10,7 +10,7 @@
   "license": "MIT",
   "magpie": {
     "middleware": "./agentrouter-itemstrip.middleware.js",
-    "icon": "./icon.svg",
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMTgxODFCIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzI3MjcyQSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZmxvdyIgeDE9IjAiIHkxPSIwIiB4Mj0iMCIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM4QjVDRjYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMzhCREY4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHJ4PSI2IiBmaWxsPSJ1cmwoI2JnKSIvPgogIDwhLS0g5aSa5bGC6L+H5ruk5ryP5paXIC0tPgogIDxwYXRoIGQ9Ik01LjIgNS42aDEzLjZsLTMuMSA0LjJIOC4zTDUuMiA1LjZ6IiBmaWxsPSIjOEI1Q0Y2IiBvcGFjaXR5PSIwLjk1Ii8+CiAgPHBhdGggZD0iTTguOSAxMC43aDYuMmwtMS43IDIuOWgtMi44bC0xLjctMi45eiIgZmlsbD0iIzM4QkRGOCIgb3BhY2l0eT0iMC45Ii8+CiAgPCEtLSDlh4DljJbmtYHnur/vvIjoh6rmvI/mlpflj6Pmu7TokL3nmoTkuKTmnaHmtYHnur8gKyDkuIDpopflh4DljJbnj6DvvIkgLS0+CiAgPHBhdGggZD0iTTExLjIgMTQuNnYyLjZjMCAuOS43IDEuNiAxLjYgMS42aDEuNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI2Zsb3cpIiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iMTQuOSIgY3k9IjE4LjgiIHI9IjEuNSIgZmlsbD0iIzM4QkRGOCIvPgogIDxjaXJjbGUgY3g9IjE0LjkiIGN5PSIxOC44IiByPSIwLjU1IiBmaWxsPSIjMTgxODFCIi8+CiAgPCEtLSDooqvmu6TmjonnmoTmrovlsZEgLS0+CiAgPGNpcmNsZSBjeD0iNy42IiBjeT0iMTYuOSIgcj0iMC45IiBmaWxsPSIjOEI1Q0Y2IiBvcGFjaXR5PSIwLjU1Ii8+CiAgPGNpcmNsZSBjeD0iNS45IiBjeT0iMTkuMiIgcj0iMC42NSIgZmlsbD0iIzhCNUNGNiIgb3BhY2l0eT0iMC4zNSIvPgo8L3N2Zz4K",
     "options": {
       "providers": ["agentrouter", "agentrouter-linuxdo"],
       "models": ["gpt-6.1-sol"],

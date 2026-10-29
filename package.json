@@ -1,6 +1,6 @@
 {
   "name": "magpie-thinking-control",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Normalize thinking/reasoning levels across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini APIs",
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
   "license": "MIT",
   "magpie": {
     "middleware": "./thinking-control.middleware.js",
-    "icon": "./icon.svg",
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgdmlld0JveD0iMCAwIDY0IDY0Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMTgxODFCIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzI3MjcyQSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZmxvdyIgeDE9IjAiIHkxPSIwIiB4Mj0iMCIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM4QjVDRjYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMzhCREY4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0idXJsKCNiZykiLz4KICA8IS0tIOaAneiAg+a7keWdl++8muWFsyAtPiDkvY4gLT4g5LitIC0+IOmrmCDlm5vmoaMgLS0+CiAgPHJlY3QgeD0iMTIiIHk9IjE0IiB3aWR0aD0iNDAiIGhlaWdodD0iNCIgcng9IjIiIGZpbGw9IiMzRjNGNDYiLz4KICA8Y2lyY2xlIGN4PSIxNyIgY3k9IjE2IiByPSIzIiBmaWxsPSIjRjk3MzE2Ii8+CiAgPGNpcmNsZSBjeD0iMjciIGN5PSIxNiIgcj0iMyIgZmlsbD0iIzM4QkRGOCIvPgogIDxjaXJjbGUgY3g9IjM3IiBjeT0iMTYiIHI9IjMiIGZpbGw9IiM4QjVDRjYiLz4KICA8Y2lyY2xlIGN4PSI0NyIgY3k9IjE2IiByPSIzIiBmaWxsPSIjQTFBMUFBIi8+CiAgPCEtLSDlpKfohJHova7lu5MgKyDlhoXpg6jmgJ3ot6/mtYHnur8gLS0+CiAgPHBhdGggZD0iTTMyIDI0Yy02LjUgMC0xMS41IDQuNi0xMS41IDExIDAgNC40IDIuNSA3LjQgNS42IDguNlY1MGgxMS44di02LjRjMy4xLTEuMiA1LjYtNC4yIDUuNi04LjYgMC02LjQtNS0xMS0xMS41LTExeiIKICAgICAgICBmaWxsPSJub25lIiBzdHJva2U9InVybCgjZmxvdykiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTMyIDI5djE0TTI3IDMzbDUgNCA1LTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0U0RTRFNyIgc3Ryb2tlLXdpZHRoPSIyLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
     "options": {
       "log": true,
       "extraProfiles": [],

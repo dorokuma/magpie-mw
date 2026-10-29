@@ -117,7 +117,7 @@ export const STRIP_PARAM_PROFILES = [
   },
   {
     match: ["deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-flash"],
-    fields: ["prompt_cache_key", "reasoning_effort"],
+    fields: ["prompt_cache_key"],
   },
 ]
 
