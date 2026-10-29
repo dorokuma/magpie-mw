@@ -28,6 +28,13 @@
 //   并且只在确实改动了 body 时才返回 true（false = 无需改、由中间件原样放行）。
 //   先对目标后端实测确认方言的"关"字段真能关掉 reasoning_content，再挂进 PROFILES。
 
+// ── 插件元数据（Magpie 插件注册 / Dashboard 标题显示名） ──────────────────
+export const meta = {
+  id: "thinking-control",
+  name: "Thinking Control",
+  description: "Normalize thinking/reasoning levels across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini APIs",
+}
+
 // ── 方言：把"关/开思考"落成具体请求字段 ─────────────────────────────
 export const DIALECTS = {
   // vLLM / HF chat-template 系（Qwen3.5/3.8 等）。
@@ -128,12 +135,15 @@ export const SANITIZE_PROFILES = [
   },
 ]
 
-// 规则是否命中：match 对模型串做子串匹配；配置了 providers 时还须供应商 id/name
-// 或模型串 "provider/model" 的 provider 段含任一 providers 子串。未配 providers 则只看 match。
+// 规则是否命中：match 对模型串做子串匹配（空串项不命中）；显式配置了 providers 字段时
+// 还要求它是非空数组且供应商 id/name 或模型串 "provider/model" 的 provider 段含任一
+// providers 子串才命中（providers: [] 或非法值 fail-closed 不命中）；
+// 未配置 providers（undefined/null）则只看 match。
 function profileMatches(profile, model, providerId) {
   if (!profile || !Array.isArray(profile.match)) return false
-  if (!profile.match.some(function (m) { return model.indexOf(m) >= 0 })) return false
-  if (!Array.isArray(profile.providers) || profile.providers.length === 0) return true
+  if (!profile.match.some(function (m) { return typeof m === "string" && m.length > 0 && model.indexOf(m) >= 0 })) return false
+  if (profile.providers === undefined || profile.providers === null) return true
+  if (!Array.isArray(profile.providers) || profile.providers.length === 0) return false
   const pid = providerId != null ? String(providerId) : ""
   const slash = model.indexOf("/")
   const modelProvider = slash >= 0 ? model.slice(0, slash) : ""
@@ -144,15 +154,57 @@ function profileMatches(profile, model, providerId) {
   })
 }
 
+// ctx.options 支持（package.json 的 magpie.options 提供默认值，Magpie 运行时注入）：
+//   log:                 false 时静默 THINKMW 常规 info 日志（异常日志仍保留）；缺省=打。
+//   extraProfiles:       数组时追加在 PROFILES 之后参与方言匹配（同型规则项）。
+//   extraStripParams:    数组时追加在 STRIP_PARAM_PROFILES 之后参与字段剥离。
+//   extraSanitizeModels: 数组时作为独立 sanitize 规则项追加进 SANITIZE_PROFILES
+//                        （不拼进首项 match，避免隐式继承首项未来的 providers 限定）。
+// 未传 options 时行为与原版 100% 一致。
+function ctxOptions(ctx) {
+  const o = ctx && typeof ctx.options === "object" && ctx.options !== null ? ctx.options : {}
+  return {
+    log: o.log !== false,
+    extraProfiles: Array.isArray(o.extraProfiles) ? o.extraProfiles : [],
+    extraStripParams: Array.isArray(o.extraStripParams) ? o.extraStripParams : [],
+    extraSanitizeModels: Array.isArray(o.extraSanitizeModels) ? o.extraSanitizeModels : [],
+  }
+}
+
+function logInfo(opts, text) {
+  if (!opts || opts.log === false) return
+  try { console.log("THINKMW " + text) } catch (_) { /* 日志出错不外抛 */ }
+}
+
 // onRequest 与 onProvider 共用的剥离 / 清洗 / 思考控制。
 // model 是用来匹配规则的目标模型串；providerId 供规则项可选的 providers 精确限定。
 // savedEffort 优先于 body.reasoning_effort（字段已被前序阶段剥离时回退用）。
 // 只在实际改了 body 时返回 true。
 function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort) {
+  const opts = ctxOptions(ctx)
+  const stripTable = opts.extraStripParams.length ? STRIP_PARAM_PROFILES.concat(opts.extraStripParams) : STRIP_PARAM_PROFILES
+  let sanitizeTable = SANITIZE_PROFILES
+  if (opts.extraSanitizeModels.length) {
+    const extra = opts.extraSanitizeModels.filter(function (m) { return typeof m === "string" && m.length > 0 })
+    if (extra.length) {
+      // 独立规则项追加：不拼进 SANITIZE_PROFILES[0].match，避免隐式继承首项未来的 providers 限定。
+      // 行为标志显式置 true，保持与原"拼进首项"语义一致（各清洗分支按 !== false 判定）。
+      sanitizeTable = SANITIZE_PROFILES.concat([{
+        match: extra,
+        developerToSystem: true,
+        assistantReasoningDetailsToContent: true,
+        assistantNullContentToEmpty: true,
+        toolsEnsureRequiredArray: true,
+        tailToolResultAppendUser: true,
+      }])
+    }
+  }
+  const profiles = opts.extraProfiles.length ? PROFILES.concat(opts.extraProfiles) : PROFILES
+
   let stripped = false
   const strippedFields = []
-  for (let i = 0; i < STRIP_PARAM_PROFILES.length; i++) {
-    const sp = STRIP_PARAM_PROFILES[i]
+  for (let i = 0; i < stripTable.length; i++) {
+    const sp = stripTable[i]
     if (!sp || !Array.isArray(sp.fields)) continue
     if (!profileMatches(sp, model, providerId)) continue
     for (let j = 0; j < sp.fields.length; j++) {
@@ -169,7 +221,7 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
     }
   }
   if (stripped) {
-    console.log("THINKMW strip model=" + model + " fields=" + strippedFields.join(","))
+    logInfo(opts, "strip model=" + model + " fields=" + strippedFields.join(","))
   }
 
   let sanitized = false
@@ -177,8 +229,8 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
   function addSanitizeAction(act) {
     if (sanitizeActions.indexOf(act) < 0) sanitizeActions.push(act)
   }
-  for (let i = 0; i < SANITIZE_PROFILES.length; i++) {
-    const sp = SANITIZE_PROFILES[i]
+  for (let i = 0; i < sanitizeTable.length; i++) {
+    const sp = sanitizeTable[i]
     if (!profileMatches(sp, model, providerId)) continue
 
     if (Array.isArray(body.messages)) {
@@ -245,11 +297,11 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
     }
   }
   if (sanitized) {
-    console.log("THINKMW sanitize model=" + model + " actions=" + sanitizeActions.join(","))
+    logInfo(opts, "sanitize model=" + model + " actions=" + sanitizeActions.join(","))
   }
 
   const modified = stripped || sanitized
-  const prof = PROFILES.find(function (p) { return profileMatches(p, model, providerId) })
+  const prof = profiles.find(function (p) { return profileMatches(p, model, providerId) })
   if (!prof) return modified
   const D = DIALECTS[prof.dialect]
   if (!D) return modified
@@ -261,7 +313,7 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
                      : (prof.closeEffort.indexOf(String(eff)) >= 0)
 
   if (!D.apply(body, !off)) return modified // 方言认为无需改，则原样放行
-  console.log("THINKMW model=" + model + " dialect=" + prof.dialect + " effort=" + String(eff) + " thinking=" + (!off))
+  logInfo(opts, "model=" + model + " dialect=" + prof.dialect + " effort=" + String(eff) + " thinking=" + (!off))
   return true
 }
 

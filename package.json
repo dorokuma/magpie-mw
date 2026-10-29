@@ -1,0 +1,22 @@
+{
+  "name": "magpie-thinking-control",
+  "version": "0.1.0",
+  "description": "Normalize thinking/reasoning levels across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini APIs",
+  "type": "module",
+  "scripts": {
+    "test": "node thinking-control.test.mjs && node agentrouter-itemstrip/agentrouter-itemstrip.test.mjs && node minis/minis.test.mjs"
+  },
+  "keywords": ["magpie", "magpie-plugin", "middleware", "thinking", "reasoning"],
+  "author": "doro",
+  "license": "MIT",
+  "magpie": {
+    "middleware": "./thinking-control.middleware.js",
+    "icon": "./icon.svg",
+    "options": {
+      "log": true,
+      "extraProfiles": [],
+      "extraStripParams": [],
+      "extraSanitizeModels": []
+    }
+  }
+}

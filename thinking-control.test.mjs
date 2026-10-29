@@ -1,4 +1,4 @@
-import { onRequest, onProvider, DIALECTS, PROFILES, STRIP_PARAM_PROFILES, SANITIZE_PROFILES } from "./thinking-control.middleware.js"
+import { onRequest, onProvider, meta, DIALECTS, PROFILES, STRIP_PARAM_PROFILES, SANITIZE_PROFILES } from "./thinking-control.middleware.js"
 
 let pass = 0, fail = 0
 function check(name, cond, info) {
@@ -56,6 +56,12 @@ check("TD escape 未带 -> false", TD.escape({}) === false)
 
 // ── 注册表结构健全 ──
 check("PROFILES 每项都有已注册方言", PROFILES.every(p => !!DIALECTS[p.dialect]), PROFILES.map(p => p.dialect))
+
+// ── 插件元数据 meta（Magpie 插件注册 / Dashboard 标题显示名） ──
+check("meta.id/name/description",
+  meta && meta.id === "thinking-control" && meta.name === "Thinking Control" &&
+  meta.description === "Normalize thinking/reasoning levels across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini APIs", meta)
+check("meta 字段齐全且为字符串", meta && typeof meta.id === "string" && typeof meta.name === "string" && typeof meta.description === "string" && Object.keys(meta).length === 3, meta && Object.keys(meta))
 
 // ── 本次修复新增：放行不改 body / 边界 / 方言语义 / catch 日志 ──
 
@@ -392,6 +398,64 @@ check("deepseek-v4-flash 末条已是 user 或 assistant -> 不追加返回 unde
 const gptTailTool = { model: "gpt-4o", messages: [{ role: "user", content: "hi" }, { role: "tool", tool_call_id: "c1", content: "ok" }] }
 check("未命中模型 (gpt-4o) 末条为 role=tool -> 原样放行返回 undefined",
   onRequest(gptTailTool, {}) === undefined && gptTailTool.messages.length === 2 && gptTailTool.messages[1].role === "tool")
+
+// ── ctx.options 动态支持：log / extraProfiles / extraStripParams / extraSanitizeModels ──
+
+// log:false 静默常规 info 日志（行为本身不变）
+const optQuietLogs = [], origQL = console.log
+console.log = function () { optQuietLogs.push(Array.prototype.join.call(arguments, " ")) }
+try {
+  r = onRequest({ model: Q, reasoning_effort: "none" }, { options: { log: false } })
+} finally { console.log = origQL }
+check("options.log=false -> 静默 THINKMW 常规日志且行为不变", et(r) === false && r.reasoning_effort === undefined && optQuietLogs.length === 0, { r, optQuietLogs })
+
+// extraProfiles：追加在 PROFILES 之后参与方言匹配
+const extraProfBody = { model: "vendor/custom-thinker-9", reasoning_effort: "none" }
+r = onRequest(extraProfBody, { options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: ["custom-thinker-9"], closeEffort: ["none"], closeWhenAbsent: false }] } })
+check("options.extraProfiles -> 追加方言匹配并关思考", et(r) === false && r.reasoning_effort === undefined, { r })
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {})
+check("未传 options 时同模型不受 extraProfiles 影响 -> 原样放行", r === undefined, r)
+
+// extraStripParams：追加在 STRIP_PARAM_PROFILES 之后参与字段剥离
+const extraStripBody = { model: "vendor/custom-strip-7", custom_flag: true, keep_me: 1 }
+r = onRequest(extraStripBody, { options: { extraStripParams: [{ match: ["custom-strip-7"], fields: ["custom_flag"] }] } })
+check("options.extraStripParams -> 追加剥离自定义字段", r !== undefined && !("custom_flag" in r) && r.keep_me === 1, { r })
+r = onRequest({ model: "vendor/custom-strip-7", custom_flag: true }, {})
+check("未传 options 时同模型不受 extraStripParams 影响 -> 原样放行", r === undefined, r)
+
+// extraSanitizeModels：其模型子串追加进 SANITIZE_PROFILES 匹配列表
+const extraSanBody = { model: "vendor/custom-san-3", messages: [{ role: "developer", content: "sys" }, { role: "assistant", content: null }] }
+r = onRequest(extraSanBody, { options: { extraSanitizeModels: ["custom-san-3"] } })
+check("options.extraSanitizeModels -> 追加清洗匹配并规范化消息",
+  r !== undefined && r.messages[0].role === "system" && r.messages[1].content === "", { r })
+r = onRequest({ model: "vendor/custom-san-3", messages: [{ role: "developer", content: "sys" }] }, {})
+check("未传 options 时同模型不受 extraSanitizeModels 影响 -> 原样放行", r === undefined, r)
+
+// ── S1 修复：profileMatches 边界收紧（显式 providers: [] / match: [""] fail-closed） ──
+// extraProfiles 显式 providers: [] -> fail-closed 不命中任何渠道，原样放行
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: ["custom-thinker-9"], providers: [], closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles 显式 providers: [] -> fail-closed 不命中返回 undefined", r === undefined, r)
+
+// extraProfiles 显式 providers: null -> 视为未配置，按 match 正常命中
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: ["custom-thinker-9"], providers: null, closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles providers: null -> 视为未配置正常命中关思考", et(r) === false && !("reasoning_effort" in r), r)
+
+// extraProfiles 只含空串 match: [""] -> 不再全量命中，原样放行
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: [""], closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles match: [''] -> 空串不命中返回 undefined", r === undefined, r)
+
+// extraStripParams 显式 providers: [] -> fail-closed 不剥离
+const extraStripEmpty = { model: "vendor/custom-strip-7", custom_flag: true }
+r = onRequest(extraStripEmpty, {
+  options: { extraStripParams: [{ match: ["custom-strip-7"], providers: [], fields: ["custom_flag"] }] }
+})
+check("extraStripParams 显式 providers: [] -> fail-closed 不剥离返回 undefined", r === undefined && extraStripEmpty.custom_flag === true, r)
 
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)

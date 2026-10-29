@@ -1,0 +1,20 @@
+{
+  "name": "@local/middleware-agentrouter-itemstrip",
+  "version": "0.1.0",
+  "description": "Strip input item IDs and reasoning items for stateless AgentRouter upstream requests",
+  "type": "module",
+  "main": "./agentrouter-itemstrip.middleware.js",
+  "exports": "./agentrouter-itemstrip.middleware.js",
+  "keywords": ["magpie", "magpie-plugin", "middleware", "agentrouter", "responses-api", "item-id"],
+  "author": "doro",
+  "license": "MIT",
+  "magpie": {
+    "middleware": "./agentrouter-itemstrip.middleware.js",
+    "icon": "./icon.svg",
+    "options": {
+      "providers": ["agentrouter", "agentrouter-linuxdo"],
+      "models": ["gpt-6.1-sol"],
+      "dropTypes": ["reasoning"]
+    }
+  }
+}

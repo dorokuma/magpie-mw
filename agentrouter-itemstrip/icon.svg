@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#18181B"/>
+      <stop offset="1" stop-color="#27272A"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+  </defs>
+  <rect width="24" height="24" rx="6" fill="url(#bg)"/>
+  <!-- 多层过滤漏斗 -->
+  <path d="M5.2 5.6h13.6l-3.1 4.2H8.3L5.2 5.6z" fill="#8B5CF6" opacity="0.95"/>
+  <path d="M8.9 10.7h6.2l-1.7 2.9h-2.8l-1.7-2.9z" fill="#38BDF8" opacity="0.9"/>
+  <!-- 净化流线（自漏斗口滴落的两条流线 + 一颗净化珠） -->
+  <path d="M11.2 14.6v2.6c0 .9.7 1.6 1.6 1.6h1.4" fill="none" stroke="url(#flow)" stroke-width="1.5" stroke-linecap="round"/>
+  <circle cx="14.9" cy="18.8" r="1.5" fill="#38BDF8"/>
+  <circle cx="14.9" cy="18.8" r="0.55" fill="#18181B"/>
+  <!-- 被滤掉的残屑 -->
+  <circle cx="7.6" cy="16.9" r="0.9" fill="#8B5CF6" opacity="0.55"/>
+  <circle cx="5.9" cy="19.2" r="0.65" fill="#8B5CF6" opacity="0.35"/>
+</svg>
