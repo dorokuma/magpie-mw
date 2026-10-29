@@ -62,3 +62,10 @@
 
 - `.bak*` 备份（含本次修复前的 r4 备份）保留在本 worktree 本地，`.gitignore` 已排除不入库。
 - `plugins.json` 注册与 Dashboard 实际展示效果未在本次范围内验证，如需可在合并后用 `magpie plugin list` 核对。
+
+## Code Review 分诊与闭环记录（2026-10-29，B 档 reviewer 发现）
+
+- **S1（已修复）**：`thinking-control.middleware.js` `profileMatches` 边界收紧——区分「未配置 `providers`（`undefined`/`null`）-> 仅按 `match` 匹配返回 `true`」与「显式配置了 `providers` 但不是非空数组（含 `providers: []`）-> fail-closed 返回 `false`」，使 `extraProfiles`/`extraStripParams` 显式传 `providers: []` 时不再误命中所有渠道；同时 `match` 子串匹配增加非空字符串校验（`typeof m === "string" && m.length > 0`），`match: [""]` 不再全量命中。未配 `providers` 的内置与扩展规则行为不变。
+- **C1（已修复）**：`applyProfiles` 中 `extraSanitizeModels` 不再拼接到 `SANITIZE_PROFILES[0].match`（避免未来首项增加 `providers` 限定时被隐式继承），改为向 `sanitizeTable` 追加独立规则项 `{ match: extra, developerToSystem: true, assistantReasoningDetailsToContent: true, assistantNullContentToEmpty: true, toolsEnsureRequiredArray: true, tailToolResultAppendUser: true }`，各行为标志显式置 `true` 与原语义一致。
+- **C2（观察项，不改码备查）**：`agentrouter-itemstrip/agentrouter-itemstrip.middleware.js:181` 日志键名 `dropped_reasoning=` 在自定义 `dropTypes` 覆盖（如丢 `compaction` 而保留 `reasoning`）时仍沿用该固定键名，实为「按 dropTypes 丢弃的条数」而非仅 reasoning 计数。为保持日志格式与既有 journald 检索模式稳定不改键名，记录备查；如需语义精确可后续调整为 `dropped_by_types=`。
+- **测试**：`thinking-control.test.mjs` 新增 4 条断言（`extraProfiles` 显式 `providers: []` 不命中、`providers: null` 正常命中、`match: [""]` 不命中、`extraStripParams` 显式 `providers: []` 不剥离）；`npm test` 全绿。

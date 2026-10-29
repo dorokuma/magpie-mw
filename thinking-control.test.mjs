@@ -431,5 +431,31 @@ check("options.extraSanitizeModels -> 追加清洗匹配并规范化消息",
 r = onRequest({ model: "vendor/custom-san-3", messages: [{ role: "developer", content: "sys" }] }, {})
 check("未传 options 时同模型不受 extraSanitizeModels 影响 -> 原样放行", r === undefined, r)
 
+// ── S1 修复：profileMatches 边界收紧（显式 providers: [] / match: [""] fail-closed） ──
+// extraProfiles 显式 providers: [] -> fail-closed 不命中任何渠道，原样放行
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: ["custom-thinker-9"], providers: [], closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles 显式 providers: [] -> fail-closed 不命中返回 undefined", r === undefined, r)
+
+// extraProfiles 显式 providers: null -> 视为未配置，按 match 正常命中
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: ["custom-thinker-9"], providers: null, closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles providers: null -> 视为未配置正常命中关思考", et(r) === false && !("reasoning_effort" in r), r)
+
+// extraProfiles 只含空串 match: [""] -> 不再全量命中，原样放行
+r = onRequest({ model: "vendor/custom-thinker-9", reasoning_effort: "none" }, {
+  options: { extraProfiles: [{ dialect: "qwenChatTemplate", match: [""], closeEffort: ["none"], closeWhenAbsent: false }] }
+})
+check("extraProfiles match: [''] -> 空串不命中返回 undefined", r === undefined, r)
+
+// extraStripParams 显式 providers: [] -> fail-closed 不剥离
+const extraStripEmpty = { model: "vendor/custom-strip-7", custom_flag: true }
+r = onRequest(extraStripEmpty, {
+  options: { extraStripParams: [{ match: ["custom-strip-7"], providers: [], fields: ["custom_flag"] }] }
+})
+check("extraStripParams 显式 providers: [] -> fail-closed 不剥离返回 undefined", r === undefined && extraStripEmpty.custom_flag === true, r)
+
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)

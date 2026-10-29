@@ -135,12 +135,15 @@ export const SANITIZE_PROFILES = [
   },
 ]
 
-// 规则是否命中：match 对模型串做子串匹配；配置了 providers 时还须供应商 id/name
-// 或模型串 "provider/model" 的 provider 段含任一 providers 子串。未配 providers 则只看 match。
+// 规则是否命中：match 对模型串做子串匹配（空串项不命中）；显式配置了 providers 字段时
+// 还要求它是非空数组且供应商 id/name 或模型串 "provider/model" 的 provider 段含任一
+// providers 子串才命中（providers: [] 或非法值 fail-closed 不命中）；
+// 未配置 providers（undefined/null）则只看 match。
 function profileMatches(profile, model, providerId) {
   if (!profile || !Array.isArray(profile.match)) return false
-  if (!profile.match.some(function (m) { return model.indexOf(m) >= 0 })) return false
-  if (!Array.isArray(profile.providers) || profile.providers.length === 0) return true
+  if (!profile.match.some(function (m) { return typeof m === "string" && m.length > 0 && model.indexOf(m) >= 0 })) return false
+  if (profile.providers === undefined || profile.providers === null) return true
+  if (!Array.isArray(profile.providers) || profile.providers.length === 0) return false
   const pid = providerId != null ? String(providerId) : ""
   const slash = model.indexOf("/")
   const modelProvider = slash >= 0 ? model.slice(0, slash) : ""
@@ -155,7 +158,8 @@ function profileMatches(profile, model, providerId) {
 //   log:                 false 时静默 THINKMW 常规 info 日志（异常日志仍保留）；缺省=打。
 //   extraProfiles:       数组时追加在 PROFILES 之后参与方言匹配（同型规则项）。
 //   extraStripParams:    数组时追加在 STRIP_PARAM_PROFILES 之后参与字段剥离。
-//   extraSanitizeModels: 数组时把其子串追加进 SANITIZE_PROFILES 首个匹配项的 match（无匹配项时新建一项）。
+//   extraSanitizeModels: 数组时作为独立 sanitize 规则项追加进 SANITIZE_PROFILES
+//                        （不拼进首项 match，避免隐式继承首项未来的 providers 限定）。
 // 未传 options 时行为与原版 100% 一致。
 function ctxOptions(ctx) {
   const o = ctx && typeof ctx.options === "object" && ctx.options !== null ? ctx.options : {}
@@ -181,15 +185,18 @@ function applyProfiles(body, ctx, model, providerId, savedEffort, hasSavedEffort
   const stripTable = opts.extraStripParams.length ? STRIP_PARAM_PROFILES.concat(opts.extraStripParams) : STRIP_PARAM_PROFILES
   let sanitizeTable = SANITIZE_PROFILES
   if (opts.extraSanitizeModels.length) {
-    sanitizeTable = SANITIZE_PROFILES.slice()
     const extra = opts.extraSanitizeModels.filter(function (m) { return typeof m === "string" && m.length > 0 })
     if (extra.length) {
-      if (sanitizeTable.length) {
-        const first = sanitizeTable[0]
-        sanitizeTable[0] = Object.assign({}, first, { match: (Array.isArray(first.match) ? first.match : []).concat(extra) })
-      } else {
-        sanitizeTable.push({ match: extra })
-      }
+      // 独立规则项追加：不拼进 SANITIZE_PROFILES[0].match，避免隐式继承首项未来的 providers 限定。
+      // 行为标志显式置 true，保持与原"拼进首项"语义一致（各清洗分支按 !== false 判定）。
+      sanitizeTable = SANITIZE_PROFILES.concat([{
+        match: extra,
+        developerToSystem: true,
+        assistantReasoningDetailsToContent: true,
+        assistantNullContentToEmpty: true,
+        toolsEnsureRequiredArray: true,
+        tailToolResultAppendUser: true,
+      }])
     }
   }
   const profiles = opts.extraProfiles.length ? PROFILES.concat(opts.extraProfiles) : PROFILES
