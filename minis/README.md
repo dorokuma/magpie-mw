@@ -27,7 +27,7 @@ Minis（OpenMinis Android 客户端）在 Magpie Dashboard 上的图标与连接
 ## 测试 · Test
 
 ```bash
-node minis/minis.test.mjs
+bun minis/minis.test.mjs
 # 或随仓库全量测试
-npm test
+bun run test
 ```

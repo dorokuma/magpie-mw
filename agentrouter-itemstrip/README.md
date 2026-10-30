@@ -66,7 +66,7 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 ## 测试 · Test
 
 ```bash
-node agentrouter-itemstrip/agentrouter-itemstrip.test.mjs
+bun agentrouter-itemstrip/agentrouter-itemstrip.test.mjs
 # 或随仓库全量测试
-npm test
+bun run test
 ```

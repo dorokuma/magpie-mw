@@ -2,7 +2,7 @@
 // second turn, all derived from the REAL captured round-2 body, so the live
 // probe can find out which one AgentRouter accepts.
 //
-//   node probe-variants.mjs            → writes /tmp/mwvariants/*.json
+//   bun probe-variants.mjs             → writes /tmp/mwvariants/*.json
 //
 // v0 = as captured (no patch)                v3 = rc + Anthropic-style thinking block
 // v1 = + reasoning_content (the rule)        v4 = thinking block + rc, no reasoning_details
