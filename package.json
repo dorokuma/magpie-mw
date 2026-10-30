@@ -4,7 +4,7 @@
   "description": "Normalize thinking/reasoning levels across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini APIs",
   "type": "module",
   "scripts": {
-    "test": "node thinking-control.test.mjs && node agentrouter-itemstrip/agentrouter-itemstrip.test.mjs && node minis/minis.test.mjs"
+    "test": "bun thinking-control.test.mjs && bun agentrouter-itemstrip/agentrouter-itemstrip.test.mjs && bun minis/minis.test.mjs"
   },
   "keywords": ["magpie", "magpie-plugin", "middleware", "thinking", "reasoning"],
   "author": "doro",
