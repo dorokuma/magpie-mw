@@ -15,7 +15,7 @@
 //   * call_id 归一化只门控 provider（不限底层模型，clampModels 可选限制）：实测上游对
 //     input[].call_id 有 64 字符硬上限，跨 provider 回放历史会带来 65 字符 call_id 直接 400。
 //     长度 >40（或 ctx.options.callIdMax >0 覆盖）的 ID 改写为确定性短值
-//     slice(0,24)+"_"+sha256hex.slice(0,15)，同原值恒得同新值，call 与 output 配对不断；
+//     slice(0,24)+"_"+fnv1a64hex.slice(0,15)，同原值恒得同新值，call 与 output 配对不断；
 //     覆盖 body.input 的 call_id 与 body.messages 的 tool_calls[].id / tool_call_id 两形态，
 //     并在 pointerOf 放行检查之前执行（带指针请求同样受 64 上限约束）。
 //   * item.id 剥离与 reasoning 丢弃额外门控精确底层模型 gpt-6.1-sol（models 可覆盖）。
@@ -35,8 +35,6 @@
 // 可能轻微影响连续性并让模型重做一部分推理（多花 reasoning token）。
 // 注意：实测里“删掉 reasoning 的 id、保留 encrypted_content”也能 200，
 // 所以 encrypted_content 本身并不是已证实的必要删除项，这里整条丢是保守选择而非已证实根因。
-
-import { createHash } from "node:crypto"
 
 export const meta = {
   id: "agentrouter-itemstrip",
@@ -78,14 +76,35 @@ var AR_CALLID_MAX = 40
 var AR_CALLID_KEEP = 24
 var AR_CALLID_HASH = 15
 
-// 确定性改写：同原值恒得同新值（sha256 前 15 hex + 原值前缀），保证 call 与
+// 纯 ES 确定性哈希：FNV-1a 64 位（对 UTF-16 code unit 逐个 xor+乘 prime），
+// 不用 BigInt、不依赖任何 Node 内置模块，moejs 沙盒可直接加载。
+// 状态用 hi/lo 两个 32 位肢表示，所有中间乘积 < 2^53 安全整数，输出稳定 16 位小写 hex。
+// offset basis = 0xcbf29ce484222325，prime = 0x100000001b3 = 0x1b3 + 0x100*2^32。
+function arHashHex(s) {
+  var lo = 0x84222325
+  var hi = 0xcbf29ce4
+  for (var i = 0; i < s.length; i++) {
+    lo = (lo ^ s.charCodeAt(i)) >>> 0
+    // (hi*2^32 + lo) * prime mod 2^64：
+    //   lo' = lo*0x1b3 (mod 2^32)；hi' = hi*0x1b3 + lo*0x100 + floor(lo*0x1b3 / 2^32) (mod 2^32)
+    var a = lo
+    var nlo = a * 0x1b3
+    hi = (hi * 0x1b3 + a * 0x100 + Math.floor(nlo / 4294967296)) % 4294967296
+    lo = nlo % 4294967296
+  }
+  var loHex = ("0000000" + lo.toString(16)).slice(-8)
+  var hiHex = ("0000000" + hi.toString(16)).slice(-8)
+  return hiHex + loHex
+}
+
+// 确定性改写：同原值恒得同新值（fnv1a-64 前 15 hex + 原值前缀），保证 call 与
 // output 配对不断、跨请求一致；默认（maxLen=40）即任务规定的
-// 原值.slice(0,24) + "_" + sha256hex(原值).slice(0,15)，总长 40。
+// 原值.slice(0,24) + "_" + fnv1a64hex(原值).slice(0,15)，总长 40。
 // callIdMax < 40 时按比例收缩前缀与哈希段（≥3 保证分隔符空间；≤2 直接截哈希），
 // 确保改写结果不长于 maxLen——否则改写后仍超阈值，下一轮会再次命中（幂等被破坏）。
 function clampId(s, maxLen) {
   if (typeof s !== "string" || s.length <= maxLen) return null
-  var hex = createHash("sha256").update(s).digest("hex")
+  var hex = arHashHex(s)
   var keep = AR_CALLID_KEEP
   var hlen = AR_CALLID_HASH
   if (maxLen <= 2) return hex.slice(0, maxLen)

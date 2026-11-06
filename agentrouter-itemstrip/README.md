@@ -32,7 +32,7 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 ## call_id 归一化 · Call ID clamp
 
 - **阈值**：任一字符串 ID 长度 >40 触发（`callIdMax` 数字 >0 时覆盖）。上游 `input[].call_id` 硬上限实测 64，40 留足余量。
-- **映射算法**：`新ID = 原值.slice(0,24) + "_" + sha256hex(原值).slice(0,15)`（默认总长 40；`callIdMax` 更小时按比例收缩前缀与哈希段保证结果 ≤ `callIdMax`）。`sha256` 用 `node:crypto` 的 `createHash`，**确定性映射**：同原值恒得同新值——`function_call` 与 `function_call_output` 配对不断，跨请求也一致。改写后不包含任何可还原信息，日志只记字段计数不打 ID 值。
+- **映射算法**：`新ID = 原值.slice(0,24) + "_" + fnv1a64hex(原值).slice(0,15)`（默认总长 40；`callIdMax` 更小时按比例收缩前缀与哈希段保证结果 ≤ `callIdMax`）。哈希用纯 ES 实现的 **FNV-1a 64 位**（双 32 位肢，无 `BigInt`、无 `node:crypto`，满足 moejs 沙盒无 Node 内置模块约束），**确定性映射**：同原值恒得同新值——`function_call` 与 `function_call_output` 配对不断，跨请求也一致。改写后不包含任何可还原信息，日志只记字段计数不打 ID 值。
 - **覆盖两形态**：Responses 的 `body.input`（上述 4 类工具项的 `call_id`）与 chat 的 `body.messages`（`tool_calls[].id`、`tool` 消息的 `tool_call_id`）。
 - **门控差异**：归一化只看 provider（`clampModels` 可收窄到指定模型），**不看** `models`——跨模型回放是超长 ID 来源；剥离/丢弃才受 `models` 门控（默认 `gpt-6.1-sol`）。归一化还在历史指针放行检查**之前**执行：带 `previous_response_id`/`conversation`/`item_reference` 的请求同样受 64 上限约束。
 
