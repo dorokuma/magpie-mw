@@ -114,5 +114,110 @@ const normBody = { input: [{ type: "message", id: "m1", role: "user", content: [
 r = onProvider(normBody, { provider: { id: "  AgentRouter ", name: "x", model: "gpt-6.1-sol" } })
 check("provider id 大小写/空白归一化后精确命中", r !== undefined && r.input[0].id === undefined, r)
 
+// ── call_id 归一化：超长 ID 确定性改写（≤40），call 与 output 配对一致 ──
+const LONG_ID = "call_" + "x".repeat(61) // 65 字符，复现上游 input[].call_id 超限 400
+const normAr = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "read", arguments: "{}" },
+  { type: "function_call_output", call_id: LONG_ID, output: "ok" },
+] }
+r = onProvider(normAr, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" } })
+check("超长 call_id（65 字符）-> 归一化到 ≤40 且配对一致",
+  r !== undefined &&
+  r.input[0].call_id.length <= 40 && r.input[1].call_id.length <= 40 &&
+  r.input[0].call_id === r.input[1].call_id &&
+  r.input[0].call_id !== LONG_ID &&
+  r.input[0].call_id.slice(0, 24) === LONG_ID.slice(0, 24) &&
+  r.input[0].call_id.charAt(24) === "_", r)
+
+// ── 确定性：同一原值两次映射得同一新值（跨请求也一致）──
+const normAgain = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "read", arguments: "{}" },
+] }
+r = onProvider(normAgain, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" } })
+check("同一原 ID 再次进来 -> 映射结果与首次相同（确定性）",
+  r !== undefined && r.input[0].call_id === normAr.input[0].call_id, r)
+
+// ── ≤40 的 call_id 不动，无其它改动返回 undefined ──
+const SHORT_ID = "call_" + "y".repeat(20) // 25 字符
+const shortBody = { input: [
+  { type: "function_call", call_id: SHORT_ID, name: "read", arguments: "{}" },
+  { type: "function_call_output", call_id: SHORT_ID, output: "ok" },
+] }
+r = onProvider(shortBody, AR)
+check("call_id ≤40 -> 原样不动，返回 undefined（幂等）",
+  r === undefined && shortBody.input[0].call_id === SHORT_ID && shortBody.input[1].call_id === SHORT_ID, r)
+
+// ── 归一化只限 4 类工具项类型：message 项的 call_id 不在规范范围内不动 ──
+const msgCallId = { input: [
+  { type: "message", call_id: LONG_ID, role: "assistant", content: [] },
+] }
+r = onProvider(msgCallId, AR)
+check("非 4 类工具项类型上的超长 call_id -> 不动",
+  r === undefined && msgCallId.input[0].call_id === LONG_ID, r)
+
+// ── messages 形态：tool_calls[].id 与 tool 消息 tool_call_id 同样归一化 ──
+const MSG_ID = "toolu_" + "z".repeat(60) // 66 字符
+const chatClamp = { messages: [
+  { role: "assistant", content: null, tool_calls: [
+    { id: MSG_ID, type: "function", function: { name: "read", arguments: "{}" } },
+  ] },
+  { role: "tool", tool_call_id: MSG_ID, content: "ok" },
+] }
+r = onProvider(chatClamp, { provider: { id: "agentrouter-github", name: "x", model: "gpt-6-astra" } })
+check("messages 形态（agentrouter-github）-> tool_calls.id 与 tool_call_id 归一化且配对一致",
+  r !== undefined &&
+  r.messages[0].tool_calls[0].id.length <= 40 &&
+  r.messages[1].tool_call_id.length <= 40 &&
+  r.messages[0].tool_calls[0].id === r.messages[1].tool_call_id &&
+  r.messages[0].tool_calls[0].id !== MSG_ID, r)
+
+// ── agentrouter-github + input 形态：命中归一化但不命中剥离模型时仍只归一化 ──
+const ghInput = { input: [
+  { type: "function_call", id: "fc_1", call_id: LONG_ID, name: "read", arguments: "{}" },
+] }
+r = onProvider(ghInput, { provider: { id: "agentrouter-github", name: "x", model: "gpt-6-astra" } })
+check("agentrouter-github + 非 gpt-6.1-sol -> 归一化 call_id、item.id 保留（剥离仍限模型）",
+  r !== undefined && r.input[0].call_id.length <= 40 && r.input[0].id === "fc_1", r)
+
+// ── 非目标 provider：超长 call_id 也不动 ──
+const otherClamp = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "read", arguments: "{}" },
+] }
+r = onProvider(otherClamp, { provider: { id: "openai", name: "x", model: "gpt-6.1-sol" } })
+check("非目标 provider -> 超长 call_id 不动，返回 undefined",
+  r === undefined && otherClamp.input[0].call_id === LONG_ID, r)
+
+// ── 带历史指针仍归一化（归一化先于 pointer 放行），但 item.id 不剥 ──
+const ptrClamp = { previous_response_id: "resp_1", input: [
+  { type: "function_call", id: "fc_1", call_id: LONG_ID, name: "read", arguments: "{}" },
+] }
+r = onProvider(ptrClamp, AR)
+check("带 previous_response_id + 超长 call_id -> 归一化执行、item.id 保留",
+  r !== undefined && r.input[0].call_id.length <= 40 && r.input[0].id === "fc_1", r)
+
+// ── 幂等：归一化后的 body 再次进入不再有改动 ──
+r = onProvider(normAr, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" } })
+check("归一化后再次进入 -> 返回 undefined（幂等）", r === undefined, r)
+
+// ── options.clampModels：限定归一化模型范围 ──
+const cmHit = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "f", arguments: "{}" },
+] }
+r = onProvider(cmHit, { provider: { id: "agentrouter-github", name: "x", model: "gpt-6-astra" }, options: { clampModels: ["gpt-6-astra"] } })
+check("options.clampModels 命中 -> 归一化生效", r !== undefined && r.input[0].call_id.length <= 40, r)
+const cmMiss = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "f", arguments: "{}" },
+] }
+r = onProvider(cmMiss, { provider: { id: "agentrouter-github", name: "x", model: "gpt-6-astra" }, options: { clampModels: ["gpt-7-x"] } })
+check("options.clampModels 未命中 -> 不归一化", r === undefined && cmMiss.input[0].call_id === LONG_ID, r)
+
+// ── options.callIdMax：覆盖默认 40 阈值 ──
+const cmx = { input: [
+  { type: "function_call", call_id: SHORT_ID, name: "f", arguments: "{}" },
+] }
+r = onProvider(cmx, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" }, options: { callIdMax: 20 } })
+check("options.callIdMax=20 -> 25 字符 ID 被压到 ≤20",
+  r !== undefined && r.input[0].call_id.length <= 20 && r.input[0].call_id !== SHORT_ID, r)
+
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)
