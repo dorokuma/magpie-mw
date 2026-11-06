@@ -18,7 +18,7 @@
 /root/workspace/magpie-mw/
 ├── AGENTS.md                        # Agent 协作指南与仓库规范
 ├── .gitignore                       # Git 忽略规则（排除备份与本地抓包产物）
-├── package.json                     # Thinking Control 插件元数据 + npm test 聚合脚本
+├── package.json                     # Thinking Control 插件元数据 + bun test 聚合脚本
 ├── icon.svg                         # Thinking Control 插件图标
 ├── README.md                        # Thinking Control 插件说明文档
 ├── thinking-control.middleware.js   # 生产网关中间件（思考控制、参数剥离、结构清洗）
@@ -50,10 +50,10 @@
 
 - **测试命令**：
   ```bash
-  npm test
+  bun run test
   ```
-  在仓库根目录执行，顺序跑 `thinking-control.test.mjs`、`agentrouter-itemstrip/agentrouter-itemstrip.test.mjs`、`minis/minis.test.mjs` 三个插件的单元测试（见根 `package.json` 的 `scripts.test`）；也可按需单跑对应 `node <file>.test.mjs`。
-- 每次修改任一插件源码或测试代码后，必须运行 `npm test` 并确保全部断言通过（零失败、退出码为 0）。
+  在仓库根目录执行，顺序跑 `thinking-control.test.mjs`、`agentrouter-itemstrip/agentrouter-itemstrip.test.mjs`、`minis/minis.test.mjs` 三个插件的单元测试（见根 `package.json` 的 `scripts.test`，运行时为 Bun）；也可按需单跑对应 `bun <file>.test.mjs`。
+- 每次修改任一插件源码或测试代码后，必须运行 `bun run test` 并确保全部断言通过（零失败、退出码为 0）。
 - **插件元数据规范**：每个插件目录一份 `package.json`，`magpie` 字段描述 Magpie 插件注册信息——中间件插件用 `magpie.middleware` 指向入口文件（agent 插件用 `magpie.agent`），`magpie.icon` 指向图标文件，`magpie.options` 提供 `ctx.options` 默认值（可选）。插件入口文件同时导出 `export const meta = { id, name, description }`，`name` 采用 Title Case 展示名（如 `Thinking Control`、`AgentRouter Item Strip`、`Minis`），供 Magpie Dashboard 标题显示。
 - **提交规范**：遵循工作区全局 `commit-msg` 与 `pre-push` hook 规范（Conventional Commits 白名单类型，主题 ≤72 字，冒号后恰好一空格，严禁过程噪声词与凭据入库）。
 
@@ -67,7 +67,7 @@
   确认服务恢复 `active`，并通过 `magpie plugin list` 核验插件路径与 `on` 状态正常。
 - **moejs 沙盒约束**：
   - 网关中间件运行在 Magpie 内置的 `moejs` 沙盒中：**无 `fs`、无 `require`、无网络访问能力**。
-  - 生产中间件必须采用**纯 ES 兼容写法**（无 Node.js 内置模块依赖、无外部 npm 包依赖），保证沙盒与本地 Node 测试环境双端可直接加载。
+  - 生产中间件必须采用**纯 ES 兼容写法**（无 Node.js 内置模块依赖、无外部 npm 包依赖），保证沙盒与本地 Bun 测试环境双端可直接加载。
   - **异常 `try/catch` 原样放行**：`onRequest(body, ctx)` 与 `onProvider(body, ctx)` 整体必须包裹在 `try/catch` 中；遇到任何异常时记录错误日志并原样放行（返回 `undefined`），绝不阻断正常网关流量。严禁返回 `null`。
   - **双阶段钩子**：`onRequest` 看到的 `body.model` / `ctx.model` 仍是客户端传入值。直连模型在此阶段完成剥离、清洗与思考翻译；若 `ctx.state` 为对象且请求带 `reasoning_effort`，先写入 `ctx.state.savedEffort`（`hasSavedEffort`），避免后续剥离丢掉原始意图。`onProvider` 在路由选定渠道后调用：`body.model` 仍可能是分组名，真实供应商与底层模型取自 `ctx.provider.id`（回退 `name`）与 `ctx.provider.model`，目标模型串为 `id + "/" + model`。effort 优先读 `body.reasoning_effort`，已被剥离则回退 `ctx.state.savedEffort`。返回修改后的 `body` 即替换发往该 provider 的请求体。直连模型若已在 `onRequest` 处理完，`onProvider` 必须幂等并返回 `undefined`。
   - **返回值契约**：仅在实际修改了 `body` 时才返回 `body`，未命中规则或无需修改时必须返回 `undefined`；多阶段处理须遵守组合返回值契约 `modified = stripped || sanitized`，当思考控制未命中、命中逃生舱或方言 `apply` 返回 `false` 时，统一按 `return modified ? body : undefined` 返回，防止前序参数剥离或结构清洗改动丢失。规则表不得硬编码具体组名。

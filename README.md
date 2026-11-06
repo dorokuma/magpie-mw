@@ -73,7 +73,7 @@
 ## 测试 · Test
 
 ```bash
-npm test
+bun run test
 # 或单跑
-node thinking-control.test.mjs
+bun thinking-control.test.mjs
 ```
