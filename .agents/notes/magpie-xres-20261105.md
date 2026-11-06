@@ -117,4 +117,4 @@
 - Issue: https://github.com/yetone/magpie/issues/5477 —「Cross-provider routing reuses foreign conversation/previous_response_id pointer → HTTP 400 on switch」
 - 关联：#4525（input[].id 超 64）、#5266（msg_ 前缀缺失）同族第三变体
 - 主张：转换层注入的 conversation/previous_response_id 指针应按目标 provider+account 一致性决定是否保留/内联展开/回源路由；middleware 层修不了（指针在 onProvider 之后才注入）
-- 本仓版本：0.1.3110（上游最新 0.1.3125，issue 中已声明）
+- Magpie 宿主版本：0.1.3110（提交 issue 时上游最新 0.1.3125）
