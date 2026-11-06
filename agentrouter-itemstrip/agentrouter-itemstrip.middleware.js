@@ -14,19 +14,21 @@
 //     trim().toLowerCase() 后精确查表，绝不退化成子串命中（防 my-agentrouter-test 这类伪造）。
 //   * call_id 归一化只门控 provider（不限底层模型，clampModels 可选限制）：实测上游对
 //     input[].call_id 有 64 字符硬上限，跨 provider 回放历史会带来 65 字符 call_id 直接 400。
-//     长度 >40（或 ctx.options.callIdMax >0 覆盖）的 ID 改写为确定性短值
+//     长度 >40（或 ctx.options.callIdMax 正整数覆盖）的 ID 改写为确定性短值
 //     slice(0,24)+"_"+fnv1a64hex.slice(0,15)，同原值恒得同新值，call 与 output 配对不断；
 //     覆盖 body.input 的 call_id 与 body.messages 的 tool_calls[].id / tool_call_id 两形态，
-//     并在 pointerOf 放行检查之前执行（带指针请求同样受 64 上限约束）。
+//     但只对无历史指针的完整内联请求执行——带指针的请求其配对在服务端，单边改写会断。
 //   * item.id 剥离与 reasoning 丢弃额外门控精确底层模型 gpt-6.1-sol（models 可覆盖）。
 //   * 所有查表都用无原型对象（Object.create(null)）+ hasOwnProperty 显式判定：
 //     item.type 是上游可控字符串，普通对象字面量查表会继承
 //     constructor / toString / valueOf / __proto__ 等原型键，
 //     会把未知类型误判成“要整条丢”或“要删 id”的类型（审查 M1/C1）。
-//   * 只处理 Array 形的 body.input（Responses 协议）；chat 的 messages 原样不动。
-//   * 有历史指针的请求整个放行：previous_response_id 非空、任一 item_reference、
-//     conversation 指针 —— 这些指向服务端已存资源，这里没有可展开的完整内联历史，
-//     悄悄删指针会“丢历史换 200”，所以原样放行只记一条边界日志。
+//   * item.id 剥离与 reasoning 丢弃只处理 Array 形 body.input（Responses 协议）；chat 的
+//     messages 仅参与无指针时的 call_id 归一化，其余字段原样不动。
+//   * 有历史指针的请求整个放行（连 call_id 归一化也跳过）：previous_response_id 非空、
+//     任一 item_reference、conversation 指针 —— 这些指向服务端已存资源，这里没有可展开的
+//     完整内联历史，配对的 call 侧也在服务端，单边 clamp 会断配对；悄悄删指针更会
+//     "丢历史换 200"，所以原样放行只记一条边界日志。
 //   * 无实际改动返回 undefined（幂等：第二次进来没有 id 可删，就什么都不做）。
 //   * 日志只有固定前缀 + provider/model + 字段类型计数，绝不打正文/ID/密文/secret。
 //
@@ -125,7 +127,9 @@ var AR_DROP_TYPES = arTable(["reasoning"])
 //   models:      非空数组时按同法精确匹配 ctx.provider.model，仅门控 item.id 剥离 /
 //                reasoning 丢弃（默认等价于 [AR_MODEL]），不影响 call_id 归一化。
 //   dropTypes:   非空数组时覆盖 AR_DROP_TYPES（整条丢弃的 item.type 列表，同法精确查表）。
-//   callIdMax:   数字且 >0 时覆盖 call_id 归一化阈值 40（阈值之下 ID 一律不动）。
+//   callIdMax:   正整数覆盖 call_id 归一化阈值 40；小数向下取整，取整后 <1（含 0.5→0、
+//                0、负数）即非法，回退默认——否则 hex.slice(0,0) 会把所有 ID 清空。
+//                阈值之下 ID 一律不动。
 //   clampModels: 非空数组时把 call_id 归一化限定到这些底层模型（同法精确查表），默认不限。
 // 空数组或非数组 = 使用默认；匹配语义始终是精确相等，绝不做子串命中。
 function normList(v) {
@@ -140,9 +144,11 @@ function normList(v) {
 }
 function optionsOf(ctx) {
   var o = ctx && typeof ctx.options === "object" && ctx.options !== null ? ctx.options : {}
-  var callIdMax = typeof o.callIdMax === "number" && isFinite(o.callIdMax) && o.callIdMax > 0
-    ? Math.floor(o.callIdMax)
-    : null
+  // 取整后 <1（0.5→0、0、负数）属非法，回退默认 40——否则 clampId 里 hex.slice(0,0)
+  // 会把所有超长 ID 清成空串。
+  var callIdMax =
+    typeof o.callIdMax === "number" && isFinite(o.callIdMax) ? Math.floor(o.callIdMax) : null
+  if (callIdMax !== null && callIdMax < 1) callIdMax = null
   return {
     providers: normList(o.providers),
     models: normList(o.models),
@@ -167,6 +173,7 @@ function pointerOf(body, input) {
   }
   if (body.previous_response_id != null && body.previous_response_id !== "") return "previous_response_id"
   if (body.conversation != null) return "conversation"
+  if (!Array.isArray(input)) return ""
   for (var i = 0; i < input.length; i++) {
     var it = input[i]
     if (it && typeof it === "object" && it.type === "item_reference") return "item_reference"
@@ -255,9 +262,19 @@ export function onProvider(body, ctx) {
 
     var tag = "provider=" + pid + " model=" + pmodel
 
+    // 历史指针判定在一切改写之前：带 previous_response_id/conversation/
+    // item_reference 的请求其 function_call_output 的 call 侧在服务端（input/
+    // messages 并非完整内联历史），clamp 单边改写会让配对断裂，剥 id 等于
+    // "丢历史换 200"。所以整体原样放行（连归一化也跳过），只记一条边界日志。
+    var input = body.input
+    var ptr = pointerOf(body, input)
+    if (ptr !== "") {
+      logLine(tag + " pass=pointer:" + ptr)
+      return
+    }
+
     // call_id 归一化：provider 门控、不限底层模型（clampModels 可选限制），
-    // 且在 pointerOf 放行检查之前执行——带 previous_response_id/conversation
-    // 指针的请求同样受上游 64 字符上限约束。改动就地发生，只统计字段数。
+    // 只对无历史指针的完整内联请求执行。改动就地发生，只统计字段数。
     var clamped = ""
     if (opts.clampModels === null || arHas(arTable(opts.clampModels), modelKey)) {
       clamped = clampCallIds(body, opts.callIdMax !== null ? opts.callIdMax : AR_CALLID_MAX)
@@ -265,7 +282,6 @@ export function onProvider(body, ctx) {
 
     // item.id 剥离 / reasoning 丢弃只作用 Responses 形态（Array 形 body.input）；
     // chat 的 messages 除 call_id 归一化外原样不动。该路径仍按原有模型门控。
-    var input = body.input
     if (!Array.isArray(input)) {
       if (clamped !== "") {
         logLine(tag + " clamped_call_id=" + clamped)
@@ -275,12 +291,6 @@ export function onProvider(body, ctx) {
     }
     if (opts.models) { if (!arHas(arTable(opts.models), modelKey)) { if (clamped !== "") { logLine(tag + " clamped_call_id=" + clamped); return body } return } }
     else if (pmodel !== AR_MODEL) { if (clamped !== "") { logLine(tag + " clamped_call_id=" + clamped); return body } return }
-
-    var ptr = pointerOf(body, input)
-    if (ptr !== "") {
-      logLine(tag + " pass=pointer:" + ptr + (clamped !== "" ? " clamped_call_id=" + clamped : ""))
-      return clamped !== "" ? body : undefined
-    }
 
     // 先数一遍：没有要改的就原样放行，绝不先改再返回 undefined。
     var strip = 0

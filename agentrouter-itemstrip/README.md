@@ -32,9 +32,9 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 ## call_id 归一化 · Call ID clamp
 
 - **阈值**：任一字符串 ID 长度 >40 触发（`callIdMax` 数字 >0 时覆盖）。上游 `input[].call_id` 硬上限实测 64，40 留足余量。
-- **映射算法**：`新ID = 原值.slice(0,24) + "_" + fnv1a64hex(原值).slice(0,15)`（默认总长 40；`callIdMax` 更小时按比例收缩前缀与哈希段保证结果 ≤ `callIdMax`）。哈希用纯 ES 实现的 **FNV-1a 64 位**（双 32 位肢，无 `BigInt`、无 `node:crypto`，满足 moejs 沙盒无 Node 内置模块约束），**确定性映射**：同原值恒得同新值——`function_call` 与 `function_call_output` 配对不断，跨请求也一致。改写后不包含任何可还原信息，日志只记字段计数不打 ID 值。
+- **映射算法**：`新ID = 原值.slice(0,24) + "_" + fnv1a64hex(原值).slice(0,15)`（默认总长 40；`callIdMax` 更小时按比例收缩前缀与哈希段保证结果 ≤ `callIdMax`）。哈希用纯 ES 实现的 **FNV-1a 64 位**（双 32 位肢，无 `BigInt`、无 `node:crypto`，满足 moejs 沙盒无 Node 内置模块约束），**确定性映射**：同原值恒得同新值——`function_call` 与 `function_call_output` 配对不断，跨请求也一致。注意改写保留原值前 24 字符明文，不是脱敏；日志只记字段计数不打 ID 值。
 - **覆盖两形态**：Responses 的 `body.input`（上述 4 类工具项的 `call_id`）与 chat 的 `body.messages`（`tool_calls[].id`、`tool` 消息的 `tool_call_id`）。
-- **门控差异**：归一化只看 provider（`clampModels` 可收窄到指定模型），**不看** `models`——跨模型回放是超长 ID 来源；剥离/丢弃才受 `models` 门控（默认 `gpt-6.1-sol`）。归一化还在历史指针放行检查**之前**执行：带 `previous_response_id`/`conversation`/`item_reference` 的请求同样受 64 上限约束。
+- **门控差异**：归一化只看 provider（`clampModels` 可收窄到指定模型），**不看** `models`——跨模型回放是超长 ID 来源；剥离/丢弃才受 `models` 门控（默认 `gpt-6.1-sol`）。归一化只对**无历史指针**的完整内联请求执行：带 `previous_response_id`/`conversation`/`item_reference` 指针的请求整体放行（见下节），其 `call_id` 配对侧在服务端，单边 clamp 会断配对。
 
 ## 历史指针整体放行 · History pointers pass through
 
@@ -67,7 +67,7 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 - `providers`：覆盖默认 provider 精确查表（默认三家），同时门控 call_id 归一化与剥离/丢弃。
 - `models`：覆盖底层模型精确匹配（默认 `["gpt-6.1-sol"]`），仅门控剥离/丢弃，不影响归一化。
 - `dropTypes`：覆盖整条丢弃的 `item.type` 列表（默认 `["reasoning"]`）。
-- `callIdMax`：数字且 >0 时覆盖归一化阈值 40。
+- `callIdMax`：正整数覆盖归一化阈值 40；小数向下取整，取整后 <1（含 0.5、0、负数）即非法，回退默认 40。
 - `clampModels`：非空数组时把归一化限定到这些底层模型（同法精确查表），默认不限。
 
 ## 返回值契约 · Return contract

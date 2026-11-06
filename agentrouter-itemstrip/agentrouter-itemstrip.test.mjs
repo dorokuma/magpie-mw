@@ -187,13 +187,33 @@ r = onProvider(otherClamp, { provider: { id: "openai", name: "x", model: "gpt-6.
 check("非目标 provider -> 超长 call_id 不动，返回 undefined",
   r === undefined && otherClamp.input[0].call_id === LONG_ID, r)
 
-// ── 带历史指针仍归一化（归一化先于 pointer 放行），但 item.id 不剥 ──
+// ── 带历史指针整体放行：连 call_id 归一化也跳过（call 侧在服务端，单边 clamp 会断配对）──
 const ptrClamp = { previous_response_id: "resp_1", input: [
   { type: "function_call", id: "fc_1", call_id: LONG_ID, name: "read", arguments: "{}" },
 ] }
 r = onProvider(ptrClamp, AR)
-check("带 previous_response_id + 超长 call_id -> 归一化执行、item.id 保留",
-  r !== undefined && r.input[0].call_id.length <= 40 && r.input[0].id === "fc_1", r)
+check("带 previous_response_id + 超长 call_id -> 原样放行（clamp 跳过、item.id 保留）",
+  r === undefined && ptrClamp.input[0].call_id === LONG_ID && ptrClamp.input[0].id === "fc_1", r)
+
+// ── 回归：带指针请求里 function_call_output 的 call_id 单边改写会断配对，必须原样放行 ──
+const ptrOut = { previous_response_id: "r", input: [
+  { type: "function_call_output", call_id: LONG_ID, output: "ok" },
+] }
+r = onProvider(ptrOut, AR)
+check("previous_response_id + output 项超长 call_id -> 原样放行，call_id 不变",
+  r === undefined && ptrOut.input[0].call_id === LONG_ID, r)
+
+// ── messages 形态同理：带 conversation 指针时 tool_calls.id / tool_call_id 不归一化 ──
+const ptrMsg = { conversation: "conv_1", messages: [
+  { role: "assistant", content: null, tool_calls: [
+    { id: MSG_ID, type: "function", function: { name: "read", arguments: "{}" } },
+  ] },
+  { role: "tool", tool_call_id: MSG_ID, content: "ok" },
+] }
+r = onProvider(ptrMsg, { provider: { id: "agentrouter-github", name: "x", model: "gpt-6-astra" } })
+check("messages 形态 + conversation 指针 -> 归一化跳过，ID 原样",
+  r === undefined && ptrMsg.messages[0].tool_calls[0].id === MSG_ID &&
+  ptrMsg.messages[1].tool_call_id === MSG_ID, r)
 
 // ── 幂等：归一化后的 body 再次进入不再有改动 ──
 r = onProvider(normAr, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" } })
@@ -218,6 +238,18 @@ const cmx = { input: [
 r = onProvider(cmx, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" }, options: { callIdMax: 20 } })
 check("options.callIdMax=20 -> 25 字符 ID 被压到 ≤20",
   r !== undefined && r.input[0].call_id.length <= 20 && r.input[0].call_id !== SHORT_ID, r)
+
+// ── options.callIdMax 非法值：floor 后 <1（0.5→0）回退默认 40，绝不把 ID 清成空串 ──
+const cmxBad = { input: [
+  { type: "function_call", call_id: LONG_ID, name: "f", arguments: "{}" },
+] }
+r = onProvider(cmxBad, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" }, options: { callIdMax: 0.5 } })
+check("options.callIdMax=0.5 -> 回退默认 40，ID 非空且 ≤40",
+  r !== undefined && typeof r.input[0].call_id === "string" &&
+  r.input[0].call_id.length > 0 && r.input[0].call_id.length <= 40 &&
+  r.input[0].call_id !== LONG_ID, r)
+r = onProvider(cmxBad, { provider: { id: "agentrouter", name: "x", model: "gpt-6.1-sol" }, options: { callIdMax: 0.5 } })
+check("callIdMax=0.5 归一化后再次进入 -> 返回 undefined（幂等）", r === undefined, r)
 
 console.log("\n" + pass + " passed, " + fail + " failed")
 if (fail) process.exit(1)
