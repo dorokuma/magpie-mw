@@ -8,23 +8,33 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 
 向 `agentrouter` / `agentrouter-linuxdo` 的 `gpt-6.1-sol` 重放上一次响应里的 inline 历史项（`function_call` / `custom_tool_call` / `function_call_output` / `custom_tool_call_output` / `message`）时，只要这些项仍带着上游签发的 `item.id`（`fc_*`、`msg_*`），上游有较高概率回 `400`（如 "The requested item was created under a different account …"）；只删 `id`、保留 `call_id`/`arguments`/`output`/内容时同样负载稳定 `200`。
 
+另一实测：上游对 `input[].call_id` 有 **64 字符硬上限**，跨 provider 生成的历史回放会带来 65 字符的 `call_id`，直接 `400`（如 `input[661].call_id` 超长），因此本插件同时对三家 provider 做**跨模型 call_id 归一化**（见下文）。
+
 ## 生效条件 · When it applies
 
 仅当**同时**满足以下条件才动手：
 
 - 只挂 `onProvider`：路由选定真实渠道之后才处理，绝不在 `onRequest` 阶段猜渠道；
-- `ctx.provider.id` 精确命中 `providers` 列表（默认 `["agentrouter", "agentrouter-linuxdo"]`）——精确相等（大小写/空白归一化后），**不做子串匹配**，`my-agentrouter-test` 这类伪造 id 不会命中；
-- `ctx.provider.model` 精确命中 `models` 列表（默认 `["gpt-6.1-sol"]`）；
-- `body.input` 为数组（`/v1/responses` 形态）；chat 的 `messages` 原样不动。
+- `ctx.provider.id` 精确命中 `providers` 列表（默认 `["agentrouter", "agentrouter-linuxdo", "agentrouter-github"]`）——精确相等（大小写/空白归一化后），**不做子串匹配**，`my-agentrouter-test` 这类伪造 id 不会命中；provider 命中即触发 call_id 归一化，item.id 剥离 / reasoning 丢弃另有模型门控；
+- `ctx.provider.model` 精确命中 `models` 列表（默认 `["gpt-6.1-sol"]`）——仅门控 item.id 剥离 / reasoning 丢弃；
+- call_id 归一化覆盖 `body.input`（Responses）与 `body.messages`（chat）两形态；item.id 剥离只作用 `body.input` 数组。
 
-## 两类处理 · Two actions
+## 三类处理 · Three actions
 
 | 动作 | 对象 | 行为 |
 | --- | --- | --- |
+| call_id 归一化 | `input` 中 `function_call` / `custom_tool_call` / `function_call_output` / `custom_tool_call_output` 项的 `call_id`；`messages` 形态中 `tool_calls[].id` 与 `tool_call_id` | 长度 >40（`callIdMax` 可覆盖）时确定性改写，见下节；不限模型，仅 provider 门控（`clampModels` 可选限制） |
 | 剥 ID | `function_call` / `custom_tool_call` / `function_call_output` / `custom_tool_call_output` / `message` 项 | 仅删除 `id` 字段；`call_id`、`name`、`arguments`、`output`、`content`、`status`、`phase` 全部保留 |
 | 整条丢弃 | `reasoning` 项（`dropTypes` 可覆盖） | 整条移除：不留空壳、不动 `encrypted_content` 密文 |
 
 其它未知类型（如 `compaction`）一律原样保留。所有查表用无原型对象 + `hasOwnProperty` 显式判定，避免上游可控的 `item.type` 命中原型键（`constructor`/`toString`/`__proto__` 等）被误判。
+
+## call_id 归一化 · Call ID clamp
+
+- **阈值**：任一字符串 ID 长度 >40 触发（`callIdMax` 数字 >0 时覆盖）。上游 `input[].call_id` 硬上限实测 64，40 留足余量。
+- **映射算法**：`新ID = 原值.slice(0,24) + "_" + fnv1a64hex(原值).slice(0,15)`（默认总长 40；`callIdMax` 更小时按比例收缩前缀与哈希段保证结果 ≤ `callIdMax`）。哈希用纯 ES 实现的 **FNV-1a 64 位**（双 32 位肢，无 `BigInt`、无 `node:crypto`，满足 moejs 沙盒无 Node 内置模块约束），**确定性映射**：同原值恒得同新值——`function_call` 与 `function_call_output` 配对不断，跨请求也一致。注意改写保留原值前 24 字符明文，不是脱敏；日志只记字段计数不打 ID 值。
+- **覆盖两形态**：Responses 的 `body.input`（上述 4 类工具项的 `call_id`）与 chat 的 `body.messages`（`tool_calls[].id`、`tool` 消息的 `tool_call_id`）。
+- **门控差异**：归一化只看 provider（`clampModels` 可收窄到指定模型），**不看** `models`——跨模型回放是超长 ID 来源；剥离/丢弃才受 `models` 门控（默认 `gpt-6.1-sol`）。归一化只对**无历史指针**的完整内联请求执行：带 `previous_response_id`/`conversation`/`item_reference` 指针的请求整体放行（见下节），其 `call_id` 配对侧在服务端，单边 clamp 会断配对。
 
 ## 历史指针整体放行 · History pointers pass through
 
@@ -46,15 +56,19 @@ Strip inline OpenAI **Responses API** item IDs and `reasoning` items for statele
 
 ```json
 {
-  "providers": ["agentrouter", "agentrouter-linuxdo"],
+  "providers": ["agentrouter", "agentrouter-linuxdo", "agentrouter-github"],
   "models": ["gpt-6.1-sol"],
-  "dropTypes": ["reasoning"]
+  "dropTypes": ["reasoning"],
+  "callIdMax": 40,
+  "clampModels": []
 }
 ```
 
-- `providers`：覆盖默认 provider 精确查表（默认 `["agentrouter", "agentrouter-linuxdo"]`）。
-- `models`：覆盖底层模型精确匹配（默认 `["gpt-6.1-sol"]`）。
+- `providers`：覆盖默认 provider 精确查表（默认三家），同时门控 call_id 归一化与剥离/丢弃。
+- `models`：覆盖底层模型精确匹配（默认 `["gpt-6.1-sol"]`），仅门控剥离/丢弃，不影响归一化。
 - `dropTypes`：覆盖整条丢弃的 `item.type` 列表（默认 `["reasoning"]`）。
+- `callIdMax`：正整数覆盖归一化阈值 40；小数向下取整，取整后 <1（含 0.5、0、负数）即非法，回退默认 40。
+- `clampModels`：非空数组时把归一化限定到这些底层模型（同法精确查表），默认不限。
 
 ## 返回值契约 · Return contract
 
